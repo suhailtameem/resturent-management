@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\V1\Customer\CategoryController;
 use App\Http\Controllers\Api\V1\Customer\CustomerAddressController;
 use App\Http\Controllers\Api\V1\Customer\CustomerAuthController;
 use App\Http\Controllers\Api\V1\Customer\CustomerCheckoutController;
+use App\Http\Controllers\Api\V1\Customer\CustomerNotificationController;
 use App\Http\Controllers\Api\V1\Customer\CustomerOrderController;
 use App\Http\Controllers\Api\V1\Customer\CustomerProfileController;
 use App\Http\Controllers\Api\V1\Customer\CustomerStoreSettingsController;
@@ -61,6 +62,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/notifications/reach', [ManagerNotificationController::class, 'reach']);
             // List notification history and delivery statistics.
             Route::get('/notifications', [ManagerNotificationController::class, 'index']);
+            // Delete selected notification history and cancel queued recipient records, or clear all push history.
+            Route::delete('/notifications', [ManagerNotificationController::class, 'destroyMany']);
             // Queue notification delivery to selected or all active customers.
             Route::post('/notifications', [ManagerNotificationController::class, 'store']);
             // Show delivery results for a notification.
@@ -224,6 +227,8 @@ Route::prefix('v1')->group(function () {
 
             // List customer orders for management with filters and pagination.
             Route::get('/orders', [ManagerOrderController::class, 'index']);
+            // Delete selected orders and their dependent records.
+            Route::delete('/orders', [ManagerOrderController::class, 'destroyMany']);
 
             // Show order details for management.
             Route::get('/orders/{order}', [ManagerOrderController::class, 'show']);
@@ -279,6 +284,9 @@ Route::prefix('v1')->group(function () {
     // Register or remove this customer's FCM device token.
     Route::post('/device-tokens/fcm', [DeviceTokenController::class, 'store'])->middleware('auth:sanctum');
     Route::delete('/device-tokens/fcm', [DeviceTokenController::class, 'destroy'])->middleware('auth:sanctum');
+    // List manager notifications addressed to the signed-in customer.
+    Route::get('/notifications', [CustomerNotificationController::class, 'index'])->middleware('auth:sanctum');
+
     // Record an open event for a notification sent to the signed-in customer.
     Route::post('/notifications/{notification}/opened', NotificationOpenController::class)->middleware('auth:sanctum');
 

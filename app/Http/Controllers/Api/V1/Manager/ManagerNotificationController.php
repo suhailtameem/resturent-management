@@ -10,6 +10,7 @@ use App\Services\NotificationAnalyticsService;
 use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ManagerNotificationController extends Controller
 {
@@ -25,6 +26,23 @@ class ManagerNotificationController extends Controller
         $items = Notification::query()->where('type', 'push')->withCount(['recipients as opened_count' => fn ($q) => $q->whereNotNull('opened_at')])->latest()->paginate(20);
 
         return response()->json(['data' => $items->getCollection()->map(fn (Notification $n): array => $this->summary($n)), 'meta' => ['current_page' => $items->currentPage(), 'last_page' => $items->lastPage(), 'total' => $items->total()]]);
+    }
+
+    public function destroyMany(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'ids' => ['sometimes', 'array', 'min:1', 'max:500'],
+            'ids.*' => ['required', 'integer', 'distinct', 'exists:notifications,id'],
+        ]);
+
+        $query = Notification::query()->where('type', 'push');
+        if (isset($data['ids'])) {
+            $query->whereIn('id', $data['ids']);
+        }
+
+        $deletedCount = DB::transaction(fn (): int => $query->delete());
+
+        return response()->json(['data' => ['deleted_count' => $deletedCount]]);
     }
 
     public function store(Request $request): JsonResponse
@@ -65,7 +83,7 @@ class ManagerNotificationController extends Controller
 
     private function result(Notification $n): array
     {
-        return [...$this->summary($n), 'targeted_devices' => $n->recipients()->count(),
+        return [...$this->summary($n), 'targeted_devices' => $n->recipients()->whereNotNull('device_token_id')->count(),
             'customers_without_devices' => max(0, $n->total_recipients - $n->recipients()->distinct('user_id')->count('user_id'))];
     }
 }

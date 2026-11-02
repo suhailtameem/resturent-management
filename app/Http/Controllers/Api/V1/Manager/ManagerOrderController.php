@@ -21,6 +21,23 @@ use Illuminate\Support\Facades\DB;
 class ManagerOrderController extends Controller
 {
     /**
+     * Delete a selected set of orders and their database-cascaded records.
+     */
+    public function destroyMany(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'ids' => ['required', 'array', 'min:1', 'max:500'],
+            'ids.*' => ['required', 'integer', 'distinct', 'exists:orders,id'],
+        ]);
+
+        $deletedCount = DB::transaction(
+            fn (): int => Order::query()->whereIn('id', $data['ids'])->delete(),
+        );
+
+        return response()->json(['data' => ['deleted_count' => $deletedCount]]);
+    }
+
+    /**
      * Get KPI statistics summary for orders dashboard.
      */
     public function stats(): JsonResponse

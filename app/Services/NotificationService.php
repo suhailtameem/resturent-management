@@ -32,6 +32,17 @@ class NotificationService
                 'idempotency_key' => $data['idempotency_key'] ?? null,
             ]);
             foreach ($customers as $customer) {
+                if ($customer->deviceTokens->isEmpty()) {
+                    NotificationRecipient::query()->create([
+                        'notification_id' => $notification->id,
+                        'user_id' => $customer->id,
+                        'device_token_id' => null,
+                        'status' => 'inbox',
+                    ]);
+
+                    continue;
+                }
+
                 foreach ($customer->deviceTokens as $device) {
                     $recipient = NotificationRecipient::query()->create([
                         'notification_id' => $notification->id, 'user_id' => $customer->id,

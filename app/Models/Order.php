@@ -33,6 +33,8 @@ class Order extends Model
         'cancelled_at',
         'cancellation_reason',
         'delivery_mode',
+        'scheduled_start_at',
+        'scheduled_end_at',
         'idempotency_key',
     ];
 
@@ -46,6 +48,8 @@ class Order extends Model
         'dispatched_at' => 'datetime',
         'delivered_at' => 'datetime',
         'cancelled_at' => 'datetime',
+        'scheduled_start_at' => 'datetime',
+        'scheduled_end_at' => 'datetime',
     ];
 
     public function user(): BelongsTo

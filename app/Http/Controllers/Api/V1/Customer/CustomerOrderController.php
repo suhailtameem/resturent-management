@@ -55,6 +55,8 @@ class CustomerOrderController extends Controller
                 'status_label_en' => $order->statusLabelEn(),
                 'can_cancel' => $order->canBeCancelled(),
                 'delivery_mode' => $order->delivery_mode,
+                'scheduled_start_at' => $order->scheduled_start_at?->toIso8601String(),
+                'scheduled_end_at' => $order->scheduled_end_at?->toIso8601String(),
                 'payment_status' => $order->payment_status,
                 'estimated_prep_time_minutes' => $order->estimated_prep_time_minutes,
                 'dispatched_at' => $order->dispatched_at?->toIso8601String(),

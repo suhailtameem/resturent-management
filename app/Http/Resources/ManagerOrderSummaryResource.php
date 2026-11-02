@@ -85,7 +85,9 @@ class ManagerOrderSummaryResource extends JsonResource
         $statusKey = self::mapStatus((string) $this->order_status);
         $createdAt = $this->created_at ? Carbon::parse($this->created_at) : now();
         $prepMinutes = (int) ($this->estimated_prep_time_minutes ?? 30);
-        $targetReadyTime = $createdAt->copy()->addMinutes($prepMinutes);
+        $targetReadyTime = $this->scheduled_start_at
+            ? Carbon::parse($this->scheduled_start_at)
+            : $createdAt->copy()->addMinutes($prepMinutes);
 
         $now = now();
         $remainingMinutes = (int) round($now->diffInMinutes($targetReadyTime, false));
@@ -153,6 +155,8 @@ class ManagerOrderSummaryResource extends JsonResource
             'status_color_hex' => self::statusColorHex((string) $this->order_status),
             'is_urgent' => $isUrgent,
             'created_at' => $createdAt->toIso8601String(),
+            'scheduled_start_at' => $this->scheduled_start_at?->toIso8601String(),
+            'scheduled_end_at' => $this->scheduled_end_at?->toIso8601String(),
             'time_ago' => self::formatArabicTimeAgo($createdAt),
             'target_ready_time' => $targetReadyTime->toIso8601String(),
             'remaining_minutes' => $remainingMinutes,

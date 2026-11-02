@@ -547,16 +547,24 @@ Idempotency-Key: ord-chk-20261029-982341
     "quote_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
     "payment_method": "cod",
     "special_notes": "يرجى رن الجرس وعدم الاتصال بالهاتف عند الوصول",
-    "contact_phone": "+966551234567"
+    "contact_phone": "+966551234567",
+    "scheduled_day": "tomorrow",
+    "scheduled_start_time": "19:30",
+    "scheduled_end_time": "20:00"
 }
 ```
 
-| Field            | Type          | Rules                                                                                                         |
-| ---------------- | ------------- | ------------------------------------------------------------------------------------------------------------- |
-| `quote_id`       | string (UUID) | **Required**. Must match an active, unexpired quote for the authenticated customer                            |
-| `payment_method` | string        | **Required**. `cod` (Cash on delivery) or `online` (when enabled in store settings)                           |
-| `special_notes`  | string        | Optional delivery or chef instructions (max 1,000 characters)                                                 |
-| `contact_phone`  | string        | Optional alternative contact phone for this order (max 20 characters); defaults to the customer account phone |
+| Field                  | Type          | Rules                                                                                                         |
+| ---------------------- | ------------- | ------------------------------------------------------------------------------------------------------------- |
+| `quote_id`             | string (UUID) | **Required**. Must match an active, unexpired quote for the authenticated customer                            |
+| `payment_method`       | string        | **Required**. `cod` (Cash on delivery) or `online` (when enabled in store settings)                           |
+| `special_notes`        | string        | Optional delivery or chef instructions (max 1,000 characters)                                                 |
+| `contact_phone`        | string        | Optional alternative contact phone for this order (max 20 characters); defaults to the customer account phone |
+| `scheduled_day`        | string        | Optional. `today` or `tomorrow`; required together with both schedule times                                   |
+| `scheduled_start_time` | string        | Optional local store time in `HH:mm` format; must be later than now when `scheduled_day` is `today`           |
+| `scheduled_end_time`   | string        | Optional local store time in `HH:mm` format; must be later than the start time                                |
+
+When the schedule fields are omitted, the order is placed immediately. Scheduled orders return `scheduled_start_at` and `scheduled_end_at` as ISO 8601 timestamps in customer and manager order resources; both values are `null` for unscheduled orders.
 
 #### Successful response: `201 Created` (or `200 OK` on idempotent retry)
 

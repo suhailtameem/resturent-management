@@ -19,6 +19,7 @@ use App\Models\StoreSettings;
 use App\Models\User;
 use App\Support\ProductImageUrl;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -83,6 +84,10 @@ class CustomerCheckoutService
                     ->lockForUpdate()
                     ->firstOrFail()
                     ->refreshExpiredPause();
+                $scheduledWindow = $this->resolveScheduledWindow(
+                    $input,
+                    $operation->timezone ?: config('app.timezone'),
+                );
                 if (! $operation->is_open) {
                     throw new CustomerApiException(
                         'The store is not currently accepting orders.',
@@ -137,6 +142,8 @@ class CustomerCheckoutService
                     'estimated_prep_time_minutes' => $totals['estimated_prep_time_minutes'],
                     'chef_special_notes' => $input['special_notes'] ?? null,
                     'delivery_mode' => $totals['delivery_mode'],
+                    'scheduled_start_at' => $scheduledWindow['start'],
+                    'scheduled_end_at' => $scheduledWindow['end'],
                     'delivery_address_id' => $totals['delivery_address_id'] ?? null,
                     'idempotency_key' => $input['idempotency_key'],
                 ]);
@@ -565,6 +572,33 @@ class CustomerCheckoutService
                 409,
             );
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     * @return array{start: ?Carbon, end: ?Carbon}
+     */
+    private function resolveScheduledWindow(array $input, string $timezone): array
+    {
+        if (empty($input['scheduled_day'])) {
+            return ['start' => null, 'end' => null];
+        }
+
+        $date = now($timezone)->startOfDay();
+        if ($input['scheduled_day'] === 'tomorrow') {
+            $date->addDay();
+        }
+
+        return [
+            'start' => Carbon::parse(
+                $date->toDateString().' '.$input['scheduled_start_time'],
+                $timezone,
+            )->utc(),
+            'end' => Carbon::parse(
+                $date->toDateString().' '.$input['scheduled_end_time'],
+                $timezone,
+            )->utc(),
+        ];
     }
 
     private function toCents(string|float|int $amount): int

@@ -40,6 +40,8 @@ class OrderResource extends JsonResource
             'id' => (string) $this->id,
             'order_number' => $this->order_number,
             'created_at' => $this->created_at?->toIso8601String(),
+            'scheduled_start_at' => $this->scheduled_start_at?->toIso8601String(),
+            'scheduled_end_at' => $this->scheduled_end_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
             'status' => $this->order_status,
             'status_label_ar' => $this->statusLabelAr(),

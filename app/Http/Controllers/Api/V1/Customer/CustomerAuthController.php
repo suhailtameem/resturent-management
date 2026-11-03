@@ -5,12 +5,14 @@ namespace App\Http\Controllers\Api\V1\Customer;
 use App\Exceptions\CustomerApiException;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\CustomerAddressResource;
+use App\Models\CustomerRefreshToken;
 use App\Models\User;
 use App\Support\SaudiPhone;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\PersonalAccessToken;
 
@@ -131,9 +133,97 @@ class CustomerAuthController extends Controller
             throw new CustomerApiException('This customer account is blocked.', 'CUSTOMER_BLOCKED', 403);
         }
 
-        return response()->json([
-            'data' => [
-                'access_token' => $user->createToken('customer-token')->plainTextToken,
+        return response()->json(['data' => $this->issueSession($user)]);
+    }
+
+    public function refresh(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'refresh_token' => ['required', 'string', 'size:64'],
+        ]);
+
+        $session = DB::transaction(function () use ($validated): array {
+            $refreshToken = CustomerRefreshToken::query()
+                ->where('token_hash', hash('sha256', $validated['refresh_token']))
+                ->whereNull('revoked_at')
+                ->lockForUpdate()
+                ->first();
+
+            if (! $refreshToken || $refreshToken->expires_at->isPast()) {
+                throw new CustomerApiException('The saved session has expired. Please sign in again.', 'SESSION_EXPIRED', 401);
+            }
+
+            $user = User::query()->with('addresses')->findOrFail($refreshToken->user_id);
+            if ($user->status !== 'active') {
+                throw new CustomerApiException('This customer account is blocked.', 'CUSTOMER_BLOCKED', 403);
+            }
+
+            $refreshToken->update(['revoked_at' => now(), 'last_used_at' => now()]);
+            if ($refreshToken->access_token_id) {
+                PersonalAccessToken::query()->whereKey($refreshToken->access_token_id)->delete();
+            }
+
+            return $this->issueSession($user);
+        });
+
+        return response()->json(['data' => $session]);
+    }
+
+    public function renew(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if ($user->status !== 'active') {
+            throw new CustomerApiException('This customer account is blocked.', 'CUSTOMER_BLOCKED', 403);
+        }
+
+        $currentAccessToken = $user->currentAccessToken();
+        if ($currentAccessToken instanceof PersonalAccessToken) {
+            DB::transaction(function () use ($currentAccessToken): void {
+                CustomerRefreshToken::query()
+                    ->where('access_token_id', $currentAccessToken->id)
+                    ->whereNull('revoked_at')
+                    ->update(['revoked_at' => now()]);
+                $currentAccessToken->delete();
+            });
+        }
+
+        return response()->json(['data' => $this->issueSession($user)]);
+    }
+
+    public function logout(Request $request): Response
+    {
+        $accessToken = $request->user()->currentAccessToken();
+        if ($accessToken instanceof PersonalAccessToken) {
+            CustomerRefreshToken::query()
+                ->where('access_token_id', $accessToken->id)
+                ->whereNull('revoked_at')
+                ->update(['revoked_at' => now()]);
+            $accessToken->delete();
+        }
+
+        return response()->noContent();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function issueSession(User $user): array
+    {
+        return DB::transaction(function () use ($user): array {
+            $plainRefreshToken = bin2hex(random_bytes(32));
+            $expiresAt = now()->addDays(90);
+            $accessToken = $user->createToken('customer-token');
+            CustomerRefreshToken::create([
+                'user_id' => $user->id,
+                'access_token_id' => $accessToken->accessToken->id,
+                'token_hash' => hash('sha256', $plainRefreshToken),
+                'expires_at' => $expiresAt,
+            ]);
+
+            return [
+                'access_token' => $accessToken->plainTextToken,
+                'refresh_token' => $plainRefreshToken,
+                'refresh_expires_at' => $expiresAt->toIso8601String(),
                 'token_type' => 'Bearer',
                 'customer' => [
                     'id' => (string) $user->id,
@@ -142,17 +232,7 @@ class CustomerAuthController extends Controller
                     'email' => $user->email,
                     'saved_addresses' => CustomerAddressResource::collection($user->addresses),
                 ],
-            ],
-        ]);
-    }
-
-    public function logout(Request $request): Response
-    {
-        $accessToken = $request->user()->currentAccessToken();
-        if ($accessToken instanceof PersonalAccessToken) {
-            $accessToken->delete();
-        }
-
-        return response()->noContent();
+            ];
+        });
     }
 }

@@ -52,6 +52,12 @@ Route::prefix('v1')->group(function () {
     // Verify a one-time code and issue a customer token.
     Route::post('/auth/verify-otp', [CustomerAuthController::class, 'verifyOtp'])->middleware('throttle:5,1');
 
+    // Exchange a rotating customer refresh token for a new access token.
+    Route::post('/auth/refresh', [CustomerAuthController::class, 'refresh'])->middleware('throttle:10,1');
+
+    // Upgrade a still-valid legacy access token to a rotating refresh-token session.
+    Route::post('/auth/renew', [CustomerAuthController::class, 'renew'])->middleware(['auth:sanctum', 'throttle:10,1']);
+
     Route::prefix('manager')->group(function () {
         // Authenticate a manager and issue a staff Sanctum token.
         Route::post('/auth/login', [ManagerAuthController::class, 'login'])->middleware('throttle:5,1');

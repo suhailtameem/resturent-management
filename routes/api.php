@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\V1\Customer\CustomerAddressController;
 use App\Http\Controllers\Api\V1\Customer\CustomerAuthController;
 use App\Http\Controllers\Api\V1\Customer\CustomerCheckoutController;
 use App\Http\Controllers\Api\V1\Customer\CustomerNotificationController;
+use App\Http\Controllers\Api\V1\Customer\CustomerOfferController;
 use App\Http\Controllers\Api\V1\Customer\CustomerOrderController;
 use App\Http\Controllers\Api\V1\Customer\CustomerProfileController;
 use App\Http\Controllers\Api\V1\Customer\CustomerStoreSettingsController;
@@ -19,6 +20,7 @@ use App\Http\Controllers\Api\V1\Manager\ManagerDeliveryCityController;
 use App\Http\Controllers\Api\V1\Manager\ManagerDeliveryNeighborhoodController;
 use App\Http\Controllers\Api\V1\Manager\ManagerDriverController;
 use App\Http\Controllers\Api\V1\Manager\ManagerNotificationController;
+use App\Http\Controllers\Api\V1\Manager\ManagerOfferController;
 use App\Http\Controllers\Api\V1\Manager\ManagerOptionGroupController;
 use App\Http\Controllers\Api\V1\Manager\ManagerOrderController;
 use App\Http\Controllers\Api\V1\Manager\ManagerProductController;
@@ -244,8 +246,37 @@ Route::prefix('v1')->group(function () {
 
             // Thermal printer ticket and ESC/POS payload for kitchen and invoice.
             Route::get('/orders/{order}/print-ticket', [ManagerOrderController::class, 'printTicket']);
+
+            // KPI summary for the offers and discounts dashboard.
+            Route::get('/offers/stats', [ManagerOfferController::class, 'stats']);
+
+            // List offers with filters (status, type, search) and pagination.
+            Route::get('/offers', [ManagerOfferController::class, 'index']);
+
+            // Create a new promotional offer or coupon code.
+            Route::post('/offers', [ManagerOfferController::class, 'store']);
+
+            // Show full offer details for viewing or editing.
+            Route::get('/offers/{id}', [ManagerOfferController::class, 'show']);
+
+            // Update an existing offer configuration and limits.
+            Route::match(['put', 'patch'], '/offers/{id}', [ManagerOfferController::class, 'update']);
+
+            // Toggle active status for an offer immediately.
+            Route::patch('/offers/{id}/toggle-status', [ManagerOfferController::class, 'toggleStatus']);
+
+            // Delete or soft-delete/archive an offer.
+            Route::delete('/offers/{id}', [ManagerOfferController::class, 'destroy']);
         });
     });
+
+    // Customer checkout: validate and apply coupon code to cart.
+    Route::post('/customer/cart/apply-coupon', [CustomerOfferController::class, 'applyCoupon']);
+    Route::post('/cart/apply-coupon', [CustomerOfferController::class, 'applyCoupon']);
+
+    // Customer catalog: menu items with active automatic discounts.
+    Route::get('/customer/menu/discounted-items', [CustomerOfferController::class, 'discountedItems']);
+    Route::get('/menu/discounted-items', [CustomerOfferController::class, 'discountedItems']);
 
     // List the authenticated customer's orders.
     Route::get('/orders', [CustomerOrderController::class, 'index'])->middleware('auth:sanctum');

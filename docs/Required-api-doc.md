@@ -1,204 +1,689 @@
-# Customer Management API Requirements
+# Offers, Discounts & Coupons Management API Specification
 
-This document specifies the manager APIs needed to replace the mock data in `lib/screens/customers/customers_management_screen.dart` and provide useful customer account management.
+This specification defines the complete backend API, database architecture, and integration requirements for the **Offers & Discounts Management Screen** (`OffersManagementScreen`) and the **Create / Edit Offer Screen** (`AddEditOfferScreen`) in the Arwaq Al-Eneab (أرواق العنب) Manager App.
 
-## Scope
+---
 
-- Use the manager API base path `/api/v1/manager`.
-- All endpoints require the manager Sanctum bearer token through `auth:staff_api` and the `staff.role:super_admin` middleware.
-- Managers can create customer profiles and edit their contact information. A manager-created account must remain unverified until the customer completes the normal phone/OTP verification flow; the manager API must not issue customer tokens or bypass OTP.
-- Track staff account review separately from phone ownership verification. A manager verification mark is an administrative attestation, not proof that the customer controls the phone number.
-- Customer management needs list/search/segments, customer summary and addresses, order history, profile updates, VIP status, account block/unblock, statistics, and CSV export.
-- Wallet balances, wallet credits, loyalty point adjustments, coupon grants, and coupon sending are out of scope. Remove those actions and displays from the customer management screen.
-- Do not hard-delete customers. `orders.user_id` is a cascading foreign key, so deleting a customer would also delete order history. Block the account instead.
-- Call and WhatsApp buttons are client-side actions using the customer's phone number; they do not need backend endpoints.
+## Table of Contents
 
-## Existing backend support and gaps (verified against this project)
+1. [Architectural Overview & Business Rules](#1-architectural-overview--business-rules)
+2. [Database Schema & ERD Analysis](#2-database-schema--erd-analysis)
+    - [2.1 Table: `offers`](#21-table-offers)
+    - [2.2 Table: `offer_items`](#22-table-offer_items)
+    - [2.3 Table: `coupons`](#23-table-coupons)
+    - [2.4 Table: `coupon_usages`](#24-table-coupon_usages)
+    - [2.5 Table: `offer_redemption_logs`](#25-table-offer_redemption_logs)
+3. [Order Pricing Calculation & Protection Pipeline](#3-order-pricing-calculation--protection-pipeline)
+4. [Required API Endpoints Summary](#4-required-api-endpoints-summary)
+5. [Endpoint Specifications](#5-endpoint-specifications)
+    - [5.1 Get Offers KPI Summary & Statistics](#51-get-offers-kpi-summary--statistics)
+    - [5.2 List Offers & Coupons (with Filters)](#52-list-offers--coupons-with-filters)
+    - [5.3 Get Single Offer Details](#53-get-single-offer-details)
+    - [5.4 Create New Offer / Coupon](#54-create-new-offer--coupon)
+    - [5.5 Update Existing Offer](#55-update-existing-offer)
+    - [5.6 Toggle Offer Active Status](#56-toggle-offer-active-status)
+    - [5.7 Delete / Archive Offer](#57-delete--archive-offer)
+    - [5.8 Validate Coupon Code (Customer Checkout API)](#58-validate-coupon-code-customer-checkout-api)
+    - [5.9 Menu Items with Strikethrough Pricing API](#59-menu-items-with-strikethrough-pricing-api)
+6. [Data Models & Schema Reference](#6-data-models--schema-reference)
+    - [6.1 Offer Master Model](#61-offer-master-model)
+    - [6.2 Coupon Detail Model](#62-coupon-detail-model)
+7. [Error Handling & Error Codes](#7-error-handling--error-codes)
 
-- Manager routes are under `/api/v1/manager` and protected by `auth:staff_api` plus `staff.role:super_admin`. The spec's role and authentication description now matches this middleware.
-- The `users` table has name, phone, full name, email, VIP flag, status, and legacy order aggregate columns. Phone is nullable and has no unique index. Email is currently `NOT NULL UNIQUE`, which conflicts with manager-created profiles that may omit email; make it nullable before implementing that contract.
-- `phone_verified_at`, `manager_verified_at`, and `manager_verified_by_staff_user_id` do not exist. OTP success currently creates/updates a user but does not record when that phone was verified. Add these fields and persist OTP verification time in the OTP flow; keep staff review fields distinct.
-- `User` already relates to `CustomerAddress` and `Order`; order items store product name snapshots and quantities, so lifetime favorite items can be computed without depending on products that may later change.
-- `total_orders_count`, `total_spent_amount`, and `last_order_at` are not maintained by checkout or order status changes. Compute manager-facing aggregates from completed/delivered orders; don't trust the stored defaults.
-- Existing order states include `delivered` and `completed`; some historic rows may lack `delivered_at`, so use `COALESCE(delivered_at, updated_at)` as the completion timestamp for date-window metrics.
-- `orders.user_id` is declared cascade-on-delete in migrations, but the inspected live database reports MyISAM, which does not enforce foreign keys. Still avoid hard deletion to preserve history and because other configured engines do cascade.
-- At inspection time there were no manager customer routes or manager customer resource. The implementation adds them and reuses `ManagerOrderSummaryResource` for customer order history.
+---
 
-Implementation choices: use the existing Manager API controller/request/resource layout. Normalize Saudi phone numbers to the OTP flow's `+9665XXXXXXXX` canonical form and check duplicates across common legacy formats; persist canonical values for new/edited numbers. Since existing phone data may be legacy-formatted, do not add a blind unique index on `users.phone` until existing values have been normalized and collision-checked. Use database-derived aggregates and a shared helper so list, profile, stats, and CSV agree.
+## 1. Architectural Overview & Business Rules
 
-The normalized-phone duplicate check is application-level until legacy records can be safely normalized and a database unique constraint can be added. The stats comparison returns `null` for the active-customer percentage when the preceding period has no active customers, because a percentage change from zero is undefined.
+The Offers & Discounts system in Arwaq Al-Eneab is built upon two core offer models with strict profit margin protection:
 
-## Customer segments and metric definitions
+### 1.1 Two Primary Offer Types
 
-- `vip`: `is_vip` is true.
-- `frequent`: at least 10 completed/delivered orders. Keep this threshold in one backend constant so it can be changed consistently.
-- `new`: customer account created in the last 30 days.
-- `inactive`: no completed/delivered order in the last 30 days, including customers who have never completed an order.
-- Segments are independent of account status; a blocked customer can also be VIP or inactive. Return the account `status` separately.
-- KPI `active_customers` means customers with a completed/delivered order in the selected stats period (the trailing 30 days by default). This is different from account `status=active`.
-- `total_orders_count` and `total_spent_amount` use completed/delivered orders only; cancelled and rejected orders must not count. `last_order_at` is the most recent customer order timestamp, and `favorite_item` is the most frequently purchased item by quantity from completed/delivered orders.
-- `average_order_value` is completed/delivered revenue divided by completed/delivered order count for the selected period. Return zero when the period has no completed orders.
+- **Type A: Promotional Coupon Code (`coupon`)**:
+    - The customer manually enters an alphanumeric promotional code (e.g., `WELCOME20`, `SAVE15`) on the checkout screen.
+    - Can have an optional minimum cart order requirement (e.g., min `80.00 SAR`).
+    - Constrained by a per-customer usage quota enforced by unique customer phone number (`once`, `twice`, `three_times`, or `unlimited`).
+    - Only **one** coupon code can ever be applied per order.
+- **Type B: Automatic Menu Item Discount (`auto_discount`)**:
+    - Automatically applied in the menu catalog and cart without entering any promotional code.
+    - Renders both the original strikethrough price and the discounted price (e.g., `~~40 SAR~~ -> 32 SAR`).
+    - Applies to either **specific products** or an **entire food category**.
 
-## Endpoint summary
+### 1.2 Strict Financial Margin Protections
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| `GET` | `/api/v1/manager/customers/stats` | Customer KPIs and comparison values |
-| `POST` | `/api/v1/manager/customers` | Create a customer profile with phone verification pending |
-| `GET` | `/api/v1/manager/customers` | Searchable, filterable, paginated customer list |
-| `GET` | `/api/v1/manager/customers/{customer}` | Customer profile, addresses, and lifetime summary |
-| `GET` | `/api/v1/manager/customers/{customer}/orders` | Paginated order history for one customer |
-| `PATCH` | `/api/v1/manager/customers/{customer}` | Update customer name, phone, email, and VIP flag |
-| `PATCH` | `/api/v1/manager/customers/{customer}/verification` | Mark or clear manager account verification |
-| `PATCH` | `/api/v1/manager/customers/{customer}/status` | Block or reactivate a customer account |
-| `GET` | `/api/v1/manager/customers/export` | Download filtered customer records as CSV |
+1. **Mandatory Maximum Discount Cap (`max_discount_cap`)**:
+    - Every offer must have an explicit financial cap (e.g., max `20.00 SAR`).
+    - Even on large orders (e.g., `500.00 SAR`), a 20% discount will never exceed `20.00 SAR`.
+2. **Coupons Never Stack (Single Coupon Policy)**:
+    - Customers cannot combine multiple coupon codes in a single checkout session.
+3. **Calculation Priority Pipeline**:
+    - Automatic product discounts apply first to establish the item's net selling price.
+    - Any cart-level coupon discount is calculated only on the remaining net balance, not on the original gross price.
+4. **ZATCA Tax Compliance**:
+    - Value Added Tax (15% VAT) is calculated on the net discounted subtotal, ensuring strict compliance with Saudi tax regulations.
 
-Register `/customers/export`, `/customers/stats`, and the collection `POST /customers` before `/customers/{customer}` so literal routes are not treated as IDs.
+---
 
-## 1. Create a customer profile
+## 2. Database Schema & ERD Analysis
 
-`POST /api/v1/manager/customers`
+The backend relational schema requires 5 dedicated tables to manage offers, coupon codes, product bindings, and customer usage histories.
 
-Create a customer profile for the customer to claim through the existing OTP sign-in flow. Require `full_name` and `phone`; accept optional `email`. Normalize phone numbers consistently with customer OTP authentication and enforce uniqueness on the normalized phone. Return `201` with the customer resource. Set account status to `active`, `phone_verified_at` to `null`, and manager verification fields to `null`. Do not accept a password, OTP, verification flag, or token in this request, and do not issue a customer token. The customer must complete OTP verification before their phone is considered verified.
+```mermaid
+erDiagram
+    offers ||--o{ offer_items : "targets"
+    offers ||--o| coupons : "configures"
+    coupons ||--o{ coupon_usages : "tracks"
+    offers ||--o{ offer_redemption_logs : "records"
 
-Example request:
-
-```json
-{"full_name":"نورة السبيعي","phone":"0559981240","email":null}
-```
-
-## 2. Customer statistics
-
-`GET /api/v1/manager/customers/stats`
-
-Optional query parameters: `from` and `to` in `YYYY-MM-DD`. With no dates, use the current 30-day period and compare it with the preceding 30-day period.
-
-Return:
-
-```json
-{
-  "data": {
-    "total_customers": 1420,
-    "active_customers": 890,
-    "vip_customers": 245,
-    "average_order_value": "84.00",
-    "currency": "SAR",
-    "period": {"from": "2026-10-01", "to": "2026-10-31"},
-    "comparison": {
-      "active_customers_change_percent": 12.0,
-      "average_order_value_change": "5.00"
+    offers {
+        bigint id PK
+        string title
+        string description
+        enum type "coupon, auto_discount"
+        enum discount_scope "cart, specific_products, category"
+        bigint category_id FK "nullable"
+        decimal discount_percentage "5.00 to 100.00"
+        decimal max_discount_cap "mandatory ceiling in SAR"
+        decimal min_order_amount "optional floor in SAR"
+        boolean is_active "true/false"
+        boolean is_ongoing "true if no expiry"
+        timestamp starts_at
+        timestamp ends_at "nullable"
+        timestamp created_at
+        timestamp updated_at
     }
-  }
-}
+
+    offer_items {
+        bigint id PK
+        bigint offer_id FK
+        bigint product_id FK
+        decimal custom_discount_price "nullable"
+        timestamp created_at
+    }
+
+    coupons {
+        bigint id PK
+        bigint offer_id FK "unique"
+        string code "unique indexed, uppercase"
+        enum usage_limit_per_user "once, twice, three_times, unlimited"
+        integer total_usage_limit "nullable"
+        integer total_used_count "default 0"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    coupon_usages {
+        bigint id PK
+        bigint coupon_id FK
+        bigint order_id FK
+        bigint customer_id FK "nullable"
+        string customer_phone "indexed"
+        decimal discount_amount_applied
+        timestamp created_at
+    }
+
+    offer_redemption_logs {
+        bigint id PK
+        bigint offer_id FK
+        bigint order_id FK
+        decimal original_amount
+        decimal final_discount_given
+        timestamp created_at
+    }
 ```
 
-`total_customers` includes active and blocked accounts. If the client keeps the growth labels shown in the mockup, return comparison values against the immediately preceding period with the same duration; otherwise remove those labels instead of hardcoding them.
+### 2.1 Table: `offers`
 
-## 3. Customer list, search, and segment filters
+Stores master offer records, discount rules, financial ceilings, and validity schedules.
 
-`GET /api/v1/manager/customers`
+| Column                | Type              | Modifiers                                 | Description                                               |
+| :-------------------- | :---------------- | :---------------------------------------- | :-------------------------------------------------------- |
+| `id`                  | `BIGINT UNSIGNED` | `AUTO_INCREMENT, PRIMARY KEY`             | Unique offer identifier                                   |
+| `title`               | `VARCHAR(255)`    | `NOT NULL`                                | Arabic title displayed to customers and staff             |
+| `description`         | `TEXT`            | `NULLABLE`                                | Explanation of discount conditions                        |
+| `type`                | `ENUM`            | `'coupon', 'auto_discount'`               | Type of offer mechanism                                   |
+| `discount_scope`      | `ENUM`            | `'cart', 'specific_products', 'category'` | Target scope of the discount                              |
+| `category_id`         | `BIGINT UNSIGNED` | `NULLABLE, FOREIGN KEY -> categories(id)` | Targeted menu category if scope is category               |
+| `discount_percentage` | `DECIMAL(5, 2)`   | `NOT NULL`                                | Discount rate (e.g., `20.00` for 20%)                     |
+| `max_discount_cap`    | `DECIMAL(8, 2)`   | `NOT NULL`                                | Maximum allowed discount in SAR (mandatory profit shield) |
+| `min_order_amount`    | `DECIMAL(8, 2)`   | `DEFAULT 0.00`                            | Minimum order subtotal required to activate offer         |
+| `is_active`           | `BOOLEAN`         | `DEFAULT TRUE`                            | Global kill-switch for the offer                          |
+| `is_ongoing`          | `BOOLEAN`         | `DEFAULT TRUE`                            | When true, runs continuously without expiration           |
+| `starts_at`           | `TIMESTAMP`       | `NOT NULL`                                | Activation start date and time                            |
+| `ends_at`             | `TIMESTAMP`       | `NULLABLE`                                | Expiration date and time (null if ongoing)                |
+| `created_at`          | `TIMESTAMP`       | `DEFAULT CURRENT_TIMESTAMP`               | Audit creation timestamp                                  |
+| `updated_at`          | `TIMESTAMP`       | `ON UPDATE CURRENT_TIMESTAMP`             | Audit update timestamp                                    |
 
-Query parameters:
+### 2.2 Table: `offer_items`
 
-- `search`: match customer name, phone, email, or saved address city/district/street.
-- `segment`: `all` (default), `vip`, `frequent`, `new`, or `inactive`.
-- `status`: `all` (default), `active`, or `blocked` account status.
-- `sort_by`: `last_order_at` (default), `total_orders_count`, `total_spent_amount`, or `created_at`.
-- `sort_order`: `desc` (default) or `asc`.
-- `page`: one-based page number.
-- `per_page`: default 15, maximum 50.
+Pivot table linking specific menu products to an `auto_discount` offer when `discount_scope = 'specific_products'`.
 
-Return a Laravel-style paginated `data` collection and `links`/`meta` object. Each list row must include:
+| Column                  | Type              | Modifiers                                        | Description                                  |
+| :---------------------- | :---------------- | :----------------------------------------------- | :------------------------------------------- |
+| `id`                    | `BIGINT UNSIGNED` | `AUTO_INCREMENT, PRIMARY KEY`                    | Pivot entry identifier                       |
+| `offer_id`              | `BIGINT UNSIGNED` | `NOT NULL, FK -> offers(id) ON DELETE CASCADE`   | Linked offer                                 |
+| `product_id`            | `BIGINT UNSIGNED` | `NOT NULL, FK -> products(id) ON DELETE CASCADE` | Discounted menu product                      |
+| `custom_discount_price` | `DECIMAL(8, 2)`   | `NULLABLE`                                       | Optional explicit promotional price override |
+| `created_at`            | `TIMESTAMP`       | `DEFAULT CURRENT_TIMESTAMP`                      | Creation timestamp                           |
+
+### 2.3 Table: `coupons`
+
+Stores promotional codes and customer usage limits when `type = 'coupon'`.
+
+| Column                 | Type              | Modifiers                                              | Description                             |
+| :--------------------- | :---------------- | :----------------------------------------------------- | :-------------------------------------- |
+| `id`                   | `BIGINT UNSIGNED` | `AUTO_INCREMENT, PRIMARY KEY`                          | Coupon identifier                       |
+| `offer_id`             | `BIGINT UNSIGNED` | `NOT NULL, UNIQUE, FK -> offers(id) ON DELETE CASCADE` | Parent offer definition                 |
+| `code`                 | `VARCHAR(32)`     | `NOT NULL, UNIQUE, INDEX`                              | Coupon code (always stored UPPERCASE)   |
+| `usage_limit_per_user` | `ENUM`            | `'once', 'twice', 'three_times', 'unlimited'`          | Limit per unique phone number           |
+| `total_usage_limit`    | `INT UNSIGNED`    | `NULLABLE`                                             | Optional total store-wide usage ceiling |
+| `total_used_count`     | `INT UNSIGNED`    | `DEFAULT 0`                                            | Current aggregate redemption count      |
+| `created_at`           | `TIMESTAMP`       | `DEFAULT CURRENT_TIMESTAMP`                            | Creation timestamp                      |
+| `updated_at`           | `TIMESTAMP`       | `ON UPDATE CURRENT_TIMESTAMP`                          | Update timestamp                        |
+
+### 2.4 Table: `coupon_usages`
+
+Audit log recording every redemption to enforce usage limits per customer phone number.
+
+| Column                    | Type              | Modifiers                       | Description                        |
+| :------------------------ | :---------------- | :------------------------------ | :--------------------------------- |
+| `id`                      | `BIGINT UNSIGNED` | `AUTO_INCREMENT, PRIMARY KEY`   | Log identifier                     |
+| `coupon_id`               | `BIGINT UNSIGNED` | `NOT NULL, FK -> coupons(id)`   | Redeemed coupon                    |
+| `order_id`                | `BIGINT UNSIGNED` | `NOT NULL, FK -> orders(id)`    | Order where coupon was applied     |
+| `customer_id`             | `BIGINT UNSIGNED` | `NULLABLE, FK -> customers(id)` | Customer ID if registered account  |
+| `customer_phone`          | `VARCHAR(20)`     | `NOT NULL, INDEX`               | Phone number used to verify limits |
+| `discount_amount_applied` | `DECIMAL(8, 2)`   | `NOT NULL`                      | Net SAR discount deducted          |
+| `created_at`              | `TIMESTAMP`       | `DEFAULT CURRENT_TIMESTAMP`     | Redemption timestamp               |
+
+### 2.5 Table: `offer_redemption_logs`
+
+Financial reconciliation table tracking aggregate savings and ROI per offer campaign.
+
+| Column                 | Type              | Modifiers                     | Description                        |
+| :--------------------- | :---------------- | :---------------------------- | :--------------------------------- |
+| `id`                   | `BIGINT UNSIGNED` | `AUTO_INCREMENT, PRIMARY KEY` | Audit identifier                   |
+| `offer_id`             | `BIGINT UNSIGNED` | `NOT NULL, FK -> offers(id)`  | Target offer                       |
+| `order_id`             | `BIGINT UNSIGNED` | `NOT NULL, FK -> orders(id)`  | Affected order                     |
+| `original_amount`      | `DECIMAL(8, 2)`   | `NOT NULL`                    | Gross amount before discount       |
+| `final_discount_given` | `DECIMAL(8, 2)`   | `NOT NULL`                    | Final amount discounted (post-cap) |
+| `created_at`           | `TIMESTAMP`       | `DEFAULT CURRENT_TIMESTAMP`   | Redemption timestamp               |
+
+---
+
+## 3. Order Pricing Calculation & Protection Pipeline
+
+The backend pricing engine must calculate cart totals using the following exact mathematical sequence:
+
+```
+[1] Base Menu Items Total:
+    gross_items_subtotal = Sum(item.price * item.quantity)
+
+[2] Automatic Item Discounts:
+    For each item in cart:
+        if item matches active auto_discount offer:
+            item_discount = Min(item.price * (offer.discount_percentage / 100), offer.max_discount_cap)
+            item.effective_price = item.price - item_discount
+    net_items_subtotal = Sum(item.effective_price * item.quantity)
+    total_auto_discount = gross_items_subtotal - net_items_subtotal
+
+[3] Coupon Discount (Cart Level):
+    if valid coupon provided:
+        if net_items_subtotal >= coupon.min_order_amount:
+            raw_coupon_discount = net_items_subtotal * (coupon.discount_percentage / 100)
+            final_coupon_discount = Min(raw_coupon_discount, coupon.max_discount_cap)
+        else:
+            final_coupon_discount = 0.00
+    else:
+        final_coupon_discount = 0.00
+
+[4] Final Net Subtotal:
+    discounted_subtotal = net_items_subtotal - final_coupon_discount
+
+[5] Delivery & VAT:
+    taxable_amount = discounted_subtotal + delivery_fee
+    vat_amount = taxable_amount * 0.15
+    grand_total = taxable_amount
+```
+
+---
+
+## 4. Required API Endpoints Summary
+
+| Method          | Endpoint                                    | Description                                                         |
+| :-------------- | :------------------------------------------ | :------------------------------------------------------------------ |
+| `GET`           | `/api/v1/manager/offers/stats`              | KPI summary metrics (active, scheduled, expired counts)             |
+| `GET`           | `/api/v1/manager/offers`                    | Filterable list of offers (`all`, `active`, `scheduled`, `expired`) |
+| `GET`           | `/api/v1/manager/offers/{id}`               | Full offer details with items and usage statistics                  |
+| `POST`          | `/api/v1/manager/offers`                    | Create a new coupon or automatic product discount                   |
+| `PUT` / `PATCH` | `/api/v1/manager/offers/{id}`               | Update existing offer configuration and limits                      |
+| `PATCH`         | `/api/v1/manager/offers/{id}/toggle-status` | Enable or disable offer active status immediately                   |
+| `DELETE`        | `/api/v1/manager/offers/{id}`               | Delete or archive an offer                                          |
+| `POST`          | `/api/v1/customer/cart/apply-coupon`        | Customer checkout endpoint to validate and apply coupon code        |
+| `GET`           | `/api/v1/customer/menu/discounted-items`    | Customer menu catalog endpoint returning strikethrough prices       |
+
+---
+
+## 5. Endpoint Specifications
+
+### 5.1 Get Offers KPI Summary & Statistics
+
+Retrieves status counters displayed in the top KPI summary card in `OffersManagementScreen`.
+
+- **Method**: `GET`
+- **URL**: `/api/v1/manager/offers/stats`
+- **Headers**:
+    ```http
+    Accept: application/json
+    Authorization: Bearer <access_token>
+    ```
+
+#### Response: `200 OK`
 
 ```json
 {
-  "id": 101,
-  "full_name": "خالد الشمري",
-  "phone": "0530697231",
-  "email": null,
-  "status": "active",
-  "is_vip": true,
-  "segments": ["vip", "frequent"],
-  "primary_address": {
-    "city": "تبوك",
-    "district": "حي المروج",
-    "street_details": "شارع الملك فهد"
-  },
-  "total_orders_count": 24,
-  "total_spent_amount": "1420.00",
-  "currency": "SAR",
-  "favorite_item": "بوكس ميكس ورق عنب وملفوف (كبير)",
-  "last_order_at": "2026-10-31T10:48:00+03:00"
+    "data": {
+        "active_offers_count": 3,
+        "scheduled_offers_count": 1,
+        "expired_offers_count": 2,
+        "total_offers_count": 6,
+        "total_discounts_saved_today": "240.00",
+        "currency": "SAR",
+        "unified_rules_enabled": true
+    }
 }
 ```
 
-Return `primary_address` and `last_order_at` as `null` when unavailable. Do not return a fabricated customer rating; ratings are not currently stored in the backend.
+---
 
-## 4. Customer profile
+### 5.2 List Offers & Coupons (with Filters)
 
-`GET /api/v1/manager/customers/{customer}`
+Retrieves the list of promotional offers for the management screen cards.
 
-Return the customer identity and account status, VIP flag, phone and manager verification fields, creation time, saved addresses (Arabic and English title/city/district/street fields, coordinates, notes, and default flag), computed order count/spend/favorite/last-order summary, and currency. Never return password hashes, OTPs, or access tokens.
+- **Method**: `GET`
+- **URL**: `/api/v1/manager/offers`
+- **Query Parameters**:
 
-## 5. Customer order history
+| Parameter  | Type      | Required | Description                                                                |
+| :--------- | :-------- | :------- | :------------------------------------------------------------------------- |
+| `status`   | `string`  | No       | Filter by status: `all`, `active`, `scheduled`, `expired`. Default: `all`. |
+| `type`     | `string`  | No       | Filter by mechanism: `all`, `coupon`, `auto_discount`.                     |
+| `search`   | `string`  | No       | Search text matching offer title or coupon code.                           |
+| `page`     | `integer` | No       | Page number. Default: `1`.                                                 |
+| `per_page` | `integer` | No       | Results per page. Default: `20`.                                           |
 
-`GET /api/v1/manager/customers/{customer}/orders`
-
-Query parameters: `page`, `per_page` (default 15, maximum 50), and optional `status` using the existing manager order status values or `all`.
-
-Return the paginated manager order summary fields already used by `GET /api/v1/manager/orders`: order number, status, date, delivery mode/address, item preview/count, payment status/method, and total amount. Order records must be constrained by the bound customer's ID. The existing `GET /api/v1/manager/orders/{order}` can be used to open any selected order's full details.
-
-## 6. Update customer profile and VIP flag
-
-`PATCH /api/v1/manager/customers/{customer}`
-
-Allow partial updates to `full_name`, `phone`, `email`, and `is_vip`. Validate email as unique while ignoring the current customer. Normalize phone the same way as OTP authentication and validate uniqueness. When phone changes, clear `phone_verified_at`, clear manager verification fields, and revoke the customer's existing Sanctum tokens; the customer must verify the new number through OTP again. Return the updated customer resource. Setting `is_vip` true/false powers the existing VIP segment. Never let this endpoint directly set phone or manager verification timestamps.
-
-Example:
+#### Response: `200 OK`
 
 ```json
 {
-  "full_name": "خالد الشمري",
-  "email": "khalid@example.test",
-  "is_vip": true
+    "data": [
+        {
+            "id": 1,
+            "title": "كوبون ترحيبي للعملاء الجدد",
+            "description": "خصم 20% على إجمالي الطلب مع تحديد سقف أقصى للخصم والحد الأدنى",
+            "type": "coupon",
+            "type_label": "كوبون خصم",
+            "status": "active",
+            "status_label": "نشط الآن",
+            "discount_percentage": 20.0,
+            "max_discount_cap": "20.00",
+            "min_order_amount": "80.00",
+            "currency": "SAR",
+            "coupon": {
+                "code": "WELCOME20",
+                "usage_limit_per_user": "once",
+                "usage_limit_label": "مرة واحدة لكل عميل",
+                "total_used_count": 48
+            },
+            "is_valid_in_cart": true,
+            "is_ongoing": true,
+            "starts_at": "2026-10-01T00:00:00Z",
+            "ends_at": null,
+            "target_scope": "cart",
+            "target_scope_label": "سلة المشتريات بالكامل"
+        },
+        {
+            "id": 2,
+            "title": "خصم 15% على قسم فتة ورق عنب",
+            "description": "يطبق مباشرة في المنيو بدون إدخال أي كود",
+            "type": "auto_discount",
+            "type_label": "خصم تلقائي على المنتجات",
+            "status": "active",
+            "status_label": "نشط الآن",
+            "discount_percentage": 15.0,
+            "max_discount_cap": "15.00",
+            "min_order_amount": "0.00",
+            "currency": "SAR",
+            "coupon": null,
+            "sample_product": {
+                "name": "فتة ورق عنب ملكية",
+                "original_price": "20.00",
+                "discounted_price": "17.00"
+            },
+            "is_valid_in_cart": true,
+            "is_ongoing": true,
+            "starts_at": "2026-10-15T00:00:00Z",
+            "ends_at": null,
+            "target_scope": "category",
+            "target_scope_label": "قسم الفتات والمقبلات"
+        }
+    ],
+    "meta": {
+        "current_page": 1,
+        "last_page": 1,
+        "per_page": 20,
+        "total": 2
+    }
 }
 ```
 
-## 7. Verify customer account (manager review)
+---
 
-`PATCH /api/v1/manager/customers/{customer}/verification`
+### 5.3 Get Single Offer Details
 
-Request:
+Retrieves complete details for editing an offer in `AddEditOfferScreen`.
 
-```json
-{"is_verified":true}
-```
+- **Method**: `GET`
+- **URL**: `/api/v1/manager/offers/{id}`
 
-When true, set `manager_verified_at` and `manager_verified_by_staff_user_id` to the current time and authenticated staff user. When false, clear both values. Return the customer ID, `phone_verified_at`, `manager_verified_at`, and `manager_verified_by_staff_user_id`. This action records staff review only; it must not set `phone_verified_at`, bypass OTP, or grant a customer token. If the phone changes, clear the manager review mark because the reviewed identity/contact has changed.
-
-The customer resource should expose `phone_verified_at` and manager verification status/time. Persist `phone_verified_at` in the customer OTP verification flow. Add nullable `manager_verified_at` and `manager_verified_by_staff_user_id` fields (with an appropriate staff-user foreign key) if they do not exist yet.
-
-## 8. Block and reactivate customer account
-
-`PATCH /api/v1/manager/customers/{customer}/status`
-
-Request:
+#### Response: `200 OK`
 
 ```json
-{"status": "blocked"}
+{
+    "data": {
+        "id": 1,
+        "title": "كوبون ترحيبي للعملاء الجدد",
+        "description": "خصم 20% على إجمالي الطلب مع تحديد سقف أقصى للخصم والحد الأدنى",
+        "type": "coupon",
+        "discount_scope": "cart",
+        "discount_percentage": 20.0,
+        "max_discount_cap": "20.00",
+        "min_order_amount": "80.00",
+        "is_active": true,
+        "is_ongoing": true,
+        "starts_at": "2026-10-01T00:00:00Z",
+        "ends_at": null,
+        "coupon": {
+            "code": "WELCOME20",
+            "usage_limit_per_user": "once",
+            "total_usage_limit": null,
+            "total_used_count": 48
+        },
+        "selected_product_ids": [],
+        "selected_category_id": null
+    }
+}
 ```
 
-Accept only `active` or `blocked`. When blocking an account, revoke all of that customer's Sanctum tokens so existing sessions stop working as well as preventing future OTP login. Reactivation sets status to `active`; the customer can sign in again through the normal OTP flow. Return the updated customer ID and status. This is the safe replacement for deleting a customer.
+---
 
-## 9. Export customer list
+### 5.4 Create New Offer / Coupon
 
-`GET /api/v1/manager/customers/export`
+Creates a new promotional offer or coupon code.
 
-Accept the same `search`, `segment`, and `status` filters as the customer list. Return a UTF-8 CSV attachment compatible with Excel, including a UTF-8 BOM for Arabic text. Export only customer fields needed by managers: name, phone, email, account status, VIP flag, primary address, completed order count, completed spend, last order date, and favorite item. Do not include wallet/coupon fields, passwords, tokens, or other secrets. The export action must apply the same filters as the visible list.
+- **Method**: `POST`
+- **URL**: `/api/v1/manager/offers`
+- **Headers**:
+    ```http
+    Accept: application/json
+    Content-Type: application/json
+    Authorization: Bearer <access_token>
+    ```
 
-## Error and access behavior
+#### Request Body (Example 1: Coupon Code)
 
-- Return `401` without a valid manager token and `403` for a staff token without the `super_admin` role, following the existing manager API middleware.
-- Return `404` for an unknown customer or an order that does not belong to the requested customer.
-- Return Laravel validation errors with `422` for invalid filters or update payloads.
-- Preserve customer records and order history when an account is blocked.
+```json
+{
+    "title": "خصم الجمعة المباركة",
+    "description": "خصم خاص على جميع الطلبات أيام الجمعة",
+    "type": "coupon",
+    "discount_scope": "cart",
+    "discount_percentage": 20.0,
+    "max_discount_cap": "25.00",
+    "min_order_amount": "90.00",
+    "is_active": true,
+    "is_ongoing": false,
+    "starts_at": "2026-11-06T00:00:00Z",
+    "ends_at": "2026-11-07T23:59:59Z",
+    "coupon": {
+        "code": "JUMAH20",
+        "usage_limit_per_user": "once"
+    }
+}
+```
+
+#### Request Body (Example 2: Auto Product Discount)
+
+```json
+{
+    "title": "خصم بوكسات ورق العنب العائلي",
+    "description": "تخفيض مباشر في قائمة الطعام",
+    "type": "auto_discount",
+    "discount_scope": "specific_products",
+    "discount_percentage": 25.0,
+    "max_discount_cap": "30.00",
+    "min_order_amount": "0.00",
+    "is_active": true,
+    "is_ongoing": true,
+    "starts_at": "2026-11-01T00:00:00Z",
+    "ends_at": null,
+    "product_ids": [101, 102]
+}
+```
+
+#### Field Validation Rules
+
+| Field                         | Type      | Required                     | Rules & Constraints                                    |
+| :---------------------------- | :-------- | :--------------------------- | :----------------------------------------------------- |
+| `title`                       | `string`  | **Yes**                      | Min 3, max 255 chars.                                  |
+| `type`                        | `string`  | **Yes**                      | Must be `'coupon'` or `'auto_discount'`.               |
+| `discount_percentage`         | `numeric` | **Yes**                      | Min: `1.0`, Max: `100.0`.                              |
+| `max_discount_cap`            | `numeric` | **Yes**                      | Mandatory. Must be `> 0`. Protects restaurant profits. |
+| `min_order_amount`            | `numeric` | No                           | Defaults to `0.00`.                                    |
+| `coupon.code`                 | `string`  | **Yes if coupon**            | Alphanumeric, uppercase, min 3, max 32 chars, unique.  |
+| `coupon.usage_limit_per_user` | `string`  | **Yes if coupon**            | `'once'`, `'twice'`, `'three_times'`, `'unlimited'`.   |
+| `product_ids`                 | `array`   | **Yes if specific_products** | Array of valid product IDs.                            |
+| `category_id`                 | `integer` | **Yes if category**          | Valid category ID.                                     |
+
+#### Response: `201 Created`
+
+```json
+{
+    "data": {
+        "id": 5,
+        "title": "خصم الجمعة المباركة",
+        "type": "coupon",
+        "code": "JUMAH20",
+        "discount_percentage": 20.0,
+        "max_discount_cap": "25.00",
+        "status": "scheduled",
+        "status_label": "مجدول"
+    },
+    "message": "تم إنشاء ونشر العرض الترويجي بنجاح"
+}
+```
+
+---
+
+### 5.5 Update Existing Offer
+
+Updates configuration, percentage, or maximum cap of an existing offer.
+
+- **Method**: `PUT` / `PATCH`
+- **URL**: `/api/v1/manager/offers/{id}`
+
+---
+
+### 5.6 Toggle Offer Active Status
+
+Immediately activates or suspends an offer without editing other parameters.
+
+- **Method**: `PATCH`
+- **URL**: `/api/v1/manager/offers/{id}/toggle-status`
+- **Request Body**:
+
+```json
+{
+    "is_active": false
+}
+```
+
+#### Response: `200 OK`
+
+```json
+{
+    "data": {
+        "id": 1,
+        "is_active": false,
+        "status": "expired",
+        "status_label": "معطّل مؤقتاً"
+    },
+    "message": "تم تعطيل العرض الترويجي بنجاح"
+}
+```
+
+---
+
+### 5.7 Delete / Archive Offer
+
+Deletes an offer if never used, or soft-deletes/archives it to preserve historical financial order audit logs.
+
+- **Method**: `DELETE`
+- **URL**: `/api/v1/manager/offers/{id}`
+
+#### Response: `200 OK`
+
+```json
+{
+    "message": "تم حذف العرض الترويجي بنجاح"
+}
+```
+
+---
+
+### 5.8 Validate Coupon Code (Customer Checkout API)
+
+Validates a promotional code entered by the customer in the mobile ordering checkout screen.
+
+- **Method**: `POST`
+- **URL**: `/api/v1/customer/cart/apply-coupon`
+- **Request Body**:
+
+```json
+{
+    "coupon_code": "WELCOME20",
+    "customer_phone": "0530697231",
+    "cart_subtotal": "95.00"
+}
+```
+
+#### Response: `200 OK` (Valid Coupon)
+
+```json
+{
+    "data": {
+        "is_valid": true,
+        "coupon_code": "WELCOME20",
+        "discount_percentage": 20.0,
+        "raw_calculated_discount": "19.00",
+        "max_discount_cap": "20.00",
+        "final_discount_amount": "19.00",
+        "discounted_subtotal": "76.00",
+        "currency": "SAR",
+        "message": "تم تطبيق كود الخصم بنجاح: خصم 19.00 ر.س"
+    }
+}
+```
+
+#### Error Response: `422 Unprocessable Content` (Limit Exceeded)
+
+```json
+{
+    "data": {
+        "is_valid": false
+    },
+    "message": "لقد قمت باستخدام هذا الكوبون مسبقاً، ولا يمكن تكراره لنفس رقم الجوال",
+    "code": "COUPON_USAGE_LIMIT_EXCEEDED"
+}
+```
+
+---
+
+### 5.9 Menu Items with Strikethrough Pricing API
+
+Powers the customer menu display showing strikethrough original prices and discounted rates.
+
+- **Method**: `GET`
+- **URL**: `/api/v1/customer/menu/discounted-items`
+
+#### Response: `200 OK`
+
+```json
+{
+    "data": [
+        {
+            "product_id": 101,
+            "product_name": "ورق عنب بلدي بدبس الرمان",
+            "original_price": "40.00",
+            "discounted_price": "32.00",
+            "saved_amount": "8.00",
+            "discount_badge": "خصم 20%",
+            "currency": "SAR"
+        }
+    ]
+}
+```
+
+---
+
+## 6. Data Models & Schema Reference
+
+### 6.1 Offer Master Model
+
+```typescript
+interface OfferMaster {
+    id: number;
+    title: string;
+    description: string | null;
+    type: "coupon" | "auto_discount";
+    type_label: string;
+    status: "active" | "scheduled" | "expired";
+    status_label: string;
+    discount_scope: "cart" | "specific_products" | "category";
+    discount_percentage: number;
+    max_discount_cap: string; // e.g. "20.00" (SAR)
+    min_order_amount: string; // e.g. "80.00" (SAR)
+    currency: "SAR";
+    coupon: CouponDetail | null;
+    is_valid_in_cart: boolean;
+    is_ongoing: boolean;
+    starts_at: string; // ISO-8601
+    ends_at: string | null; // ISO-8601
+}
+```
+
+### 6.2 Coupon Detail Model
+
+```typescript
+interface CouponDetail {
+    code: string; // e.g. "WELCOME20"
+    usage_limit_per_user: "once" | "twice" | "three_times" | "unlimited";
+    usage_limit_label: string;
+    total_usage_limit: number | null;
+    total_used_count: number;
+}
+```
+
+---
+
+## 7. Error Handling & Error Codes
+
+| HTTP Status | Error Code                    | Description / Client Message                                       |
+| :---------- | :---------------------------- | :----------------------------------------------------------------- |
+| `400`       | `COUPONS_CANNOT_BE_STACKED`   | لا يمكن دمج أكثر من كوبون في الطلب الواحد                          |
+| `404`       | `OFFER_NOT_FOUND`             | العرض الترويجي المطلوب غير موجود                                   |
+| `404`       | `COUPON_NOT_FOUND`            | كود الكوبون المدخل غير صحيح                                        |
+| `409`       | `COUPON_CODE_ALREADY_EXISTS`  | رمز الكوبون مسجل مسبقاً، يرجى اختيار رمز آخر                       |
+| `422`       | `MINIMUM_ORDER_NOT_MET`       | لم تبلغ قيمة السلة الحد الأدنى لتفعيل الكوبون (الحد الأدنى: X ر.س) |
+| `422`       | `COUPON_USAGE_LIMIT_EXCEEDED` | تم تجاوز الحد الأقصى لاستخدام الكوبون لهذا العميل                  |
+| `422`       | `OFFER_EXPIRED`               | انتهت صلاحية هذا العرض الترويجي                                    |
+| `422`       | `MISSING_MAX_CAP`             | تحديد سقف الخصم الأقصى (الكاب) إلزامي لحماية أرباح المطعم          |
+| `500`       | `INTERNAL_SERVER_ERROR`       | خطأ غير متوقع في خادم احتساب الخصومات                              |

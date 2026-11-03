@@ -952,17 +952,17 @@ These endpoints let the manager app search and manage customer accounts, review 
 
 ### Endpoints
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/api/v1/manager/customers/stats` | Customer KPIs for a date period |
-| `POST` | `/api/v1/manager/customers` | Create a customer profile pending phone OTP verification |
-| `GET` | `/api/v1/manager/customers` | Search, filter, sort, and paginate customers |
-| `GET` | `/api/v1/manager/customers/{customer}` | Customer profile, saved addresses, and order summary |
-| `GET` | `/api/v1/manager/customers/{customer}/orders` | Paginated order history for one customer |
-| `PATCH` | `/api/v1/manager/customers/{customer}` | Edit customer details and VIP status |
-| `PATCH` | `/api/v1/manager/customers/{customer}/verification` | Set or clear manager review status |
-| `PATCH` | `/api/v1/manager/customers/{customer}/status` | Block or reactivate the account |
-| `GET` | `/api/v1/manager/customers/export` | Download filtered customer rows as CSV |
+| Method  | Path                                                | Purpose                                                  |
+| ------- | --------------------------------------------------- | -------------------------------------------------------- |
+| `GET`   | `/api/v1/manager/customers/stats`                   | Customer KPIs for a date period                          |
+| `POST`  | `/api/v1/manager/customers`                         | Create a customer profile pending phone OTP verification |
+| `GET`   | `/api/v1/manager/customers`                         | Search, filter, sort, and paginate customers             |
+| `GET`   | `/api/v1/manager/customers/{customer}`              | Customer profile, saved addresses, and order summary     |
+| `GET`   | `/api/v1/manager/customers/{customer}/orders`       | Paginated order history for one customer                 |
+| `PATCH` | `/api/v1/manager/customers/{customer}`              | Edit customer details and VIP status                     |
+| `PATCH` | `/api/v1/manager/customers/{customer}/verification` | Set or clear manager review status                       |
+| `PATCH` | `/api/v1/manager/customers/{customer}/status`       | Block or reactivate the account                          |
+| `GET`   | `/api/v1/manager/customers/export`                  | Download filtered customer rows as CSV                   |
 
 Static routes such as `/customers/stats` and `/customers/export` are registered before the `{customer}` route. Do not treat these path values as customer IDs.
 
@@ -972,11 +972,11 @@ Static routes such as `/customers/stats` and `/customers/export` are registered 
 
 Request fields:
 
-| Field | Type | Rules |
-| --- | --- | --- |
-| `full_name` | string | Required; max 100 characters |
-| `phone` | string | Required Saudi mobile number; accepts `05XXXXXXXX`, `5XXXXXXXX`, `9665XXXXXXXX`, or `+9665XXXXXXXX` forms |
-| `email` | string or null | Optional; valid email; max 191 characters; unique when supplied |
+| Field       | Type           | Rules                                                                                                     |
+| ----------- | -------------- | --------------------------------------------------------------------------------------------------------- |
+| `full_name` | string         | Required; max 100 characters                                                                              |
+| `phone`     | string         | Required Saudi mobile number; accepts `05XXXXXXXX`, `5XXXXXXXX`, `9665XXXXXXXX`, or `+9665XXXXXXXX` forms |
+| `email`     | string or null | Optional; valid email; max 191 characters; unique when supplied                                           |
 
 Example:
 
@@ -996,15 +996,15 @@ Returns `201 Created` with the customer resource. Phone numbers are saved in can
 
 Optional query parameters:
 
-| Parameter | Type | Rules |
-| --- | --- | --- |
-| `search` | string | Matches customer name, phone, email, or saved address city/district/street in Arabic or English |
-| `segment` | string | `all` (default), `vip`, `frequent`, `new`, or `inactive` |
-| `status` | string | `all` (default), `active`, or `blocked` |
-| `sort_by` | string | `last_order_at` (default), `total_orders_count`, `total_spent_amount`, or `created_at` |
-| `sort_order` | string | `desc` (default) or `asc` |
-| `page` | integer | One-based page number; defaults to 1 |
-| `per_page` | integer | 1–50; defaults to 15 |
+| Parameter    | Type    | Rules                                                                                           |
+| ------------ | ------- | ----------------------------------------------------------------------------------------------- |
+| `search`     | string  | Matches customer name, phone, email, or saved address city/district/street in Arabic or English |
+| `segment`    | string  | `all` (default), `vip`, `frequent`, `new`, or `inactive`                                        |
+| `status`     | string  | `all` (default), `active`, or `blocked`                                                         |
+| `sort_by`    | string  | `last_order_at` (default), `total_orders_count`, `total_spent_amount`, or `created_at`          |
+| `sort_order` | string  | `desc` (default) or `asc`                                                                       |
+| `page`       | integer | One-based page number; defaults to 1                                                            |
+| `per_page`   | integer | 1–50; defaults to 15                                                                            |
 
 The response uses Laravel pagination (`data`, `links`, and `meta`). A list item contains the same identity, verification, segment, primary address, and aggregate fields as this abbreviated example:
 
@@ -1062,11 +1062,11 @@ Unknown customer IDs return `404 Not Found`.
 
 Optional query parameters:
 
-| Parameter | Type | Rules |
-| --- | --- | --- |
-| `page` | integer | One-based page number; defaults to 1 |
-| `per_page` | integer | 1–50; defaults to 15 |
-| `status` | string | `all` (default), `pending`, `preparing`, `ready`, `out_for_delivery`, `delivered`, `completed`, `cancelled`, or `rejected` |
+| Parameter  | Type    | Rules                                                                                                                      |
+| ---------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `page`     | integer | One-based page number; defaults to 1                                                                                       |
+| `per_page` | integer | 1–50; defaults to 15                                                                                                       |
+| `status`   | string  | `all` (default), `pending`, `preparing`, `ready`, `out_for_delivery`, `delivered`, `completed`, `cancelled`, or `rejected` |
 
 The response is Laravel-paginated and uses the same row shape as `GET /api/v1/manager/orders`, including order/customer, delivery, item preview/count, payment, and total fields. The query is constrained to the requested customer's `user_id`; it cannot expose another customer's orders. Use `GET /api/v1/manager/orders/{order}` to open a selected order's full details.
 
@@ -1076,12 +1076,12 @@ The response is Laravel-paginated and uses the same row shape as `GET /api/v1/ma
 
 Send any subset of these fields:
 
-| Field | Type | Rules |
-| --- | --- | --- |
-| `full_name` | string | Non-empty; max 100 characters |
-| `phone` | string | Valid Saudi mobile number; unique after normalization |
-| `email` | string or null | Valid email; max 191 characters; unique when supplied |
-| `is_vip` | boolean | Sets or clears the VIP segment |
+| Field       | Type           | Rules                                                 |
+| ----------- | -------------- | ----------------------------------------------------- |
+| `full_name` | string         | Non-empty; max 100 characters                         |
+| `phone`     | string         | Valid Saudi mobile number; unique after normalization |
+| `email`     | string or null | Valid email; max 191 characters; unique when supplied |
+| `is_vip`    | boolean        | Sets or clears the VIP segment                        |
 
 Example:
 
@@ -1103,7 +1103,7 @@ Returns `200 OK` with the updated customer resource. Changing the phone number s
 Request:
 
 ```json
-{"is_verified": true}
+{ "is_verified": true }
 ```
 
 `is_verified` is required and boolean. When true, the API sets `manager_verified_at` and `manager_verified_by_staff_user_id` to the current timestamp and authenticated manager. When false, both fields are cleared. Returns the customer ID, `phone_verified_at`, manager verification timestamp and reviewer ID, and `is_manager_verified`.
@@ -1117,7 +1117,7 @@ Manager review is an administrative attestation and is separate from proof that 
 Request:
 
 ```json
-{"status": "blocked"}
+{ "status": "blocked" }
 ```
 
 `status` is required and must be `active` or `blocked`. Blocking revokes all current customer Sanctum tokens and prevents future customer OTP login. Reactivating allows the customer to sign in again through OTP. Returns `{ "data": { "id": 101, "status": "blocked" } }` with `200 OK`. Customer records are not hard-deleted, preserving order history.
@@ -1138,7 +1138,7 @@ Example response:
         "vip_customers": 245,
         "average_order_value": "84.00",
         "currency": "SAR",
-        "period": {"from": "2026-10-01", "to": "2026-10-31"},
+        "period": { "from": "2026-10-01", "to": "2026-10-31" },
         "comparison": {
             "active_customers_change_percent": 12.0,
             "average_order_value_change": "5.00"
@@ -1686,11 +1686,11 @@ Response: `200 OK`
 Laravel Echo listeners use the leading dot because the events define `broadcastAs()`:
 
 ```javascript
-Echo.private('manager.orders')
-    .listen('.OrderCreated', ({ order }) => {
+Echo.private("manager.orders")
+    .listen(".OrderCreated", ({ order }) => {
         // Add or refresh the order, refresh stats, and play the new-order chime.
     })
-    .listen('.OrderStatusUpdated', ({ order }) => {
+    .listen(".OrderStatusUpdated", ({ order }) => {
         // Replace the updated order in the current list or detail view.
     });
 ```
@@ -1741,7 +1741,7 @@ All routes below are under `/api/v1/manager` and require a Bearer token for an a
 Returns active customer and customer-owned device-token counts. Manager app device tokens are excluded.
 
 ```json
-{"data":{"customers":42,"devices":57}}
+{ "data": { "customers": 42, "devices": 57 } }
 ```
 
 ### `POST /notifications`
@@ -1749,7 +1749,16 @@ Returns active customer and customer-owned device-token counts. Manager app devi
 Queues a push notification and returns HTTP `202`. Required fields: `title` (string, max 150), `body` (string, max 1000), `idempotency_key` (string, max 80), and either `send_to_all: true` or a non-empty `customer_ids` array of existing customer IDs (up to 5000). Optional `destination` is restricted to `/home` or `/orders`; `coupon_code` is an optional display string (max 100), not auto-applied. Duplicate idempotency keys return the original notification without enqueueing it again.
 
 ```json
-{"data":{"id":17,"total_recipients":5,"targeted_devices":7,"successful_sends":0,"failed_sends":0,"customers_without_devices":1}}
+{
+    "data": {
+        "id": 17,
+        "total_recipients": 5,
+        "targeted_devices": 7,
+        "successful_sends": 0,
+        "failed_sends": 0,
+        "customers_without_devices": 1
+    }
+}
 ```
 
 The first response reflects queued work. Poll `GET /notifications/{id}` to get individual results. `successful_sends` means Firebase accepted the message; it does not confirm device delivery or display.
@@ -1765,3 +1774,457 @@ Requires the customer’s Sanctum Bearer token. It only records an open against 
 ### Delivery configuration
 
 Configure `FCM_PROJECT_ID`, `FCM_CLIENT_EMAIL`, and `FCM_PRIVATE_KEY` from a Firebase Service Account in the Laravel environment. Run a Laravel queue worker for notification delivery. Only `UNREGISTERED` Firebase tokens are removed; transient HTTP errors retry through the queue and other FCM errors retain the token.
+
+## Offers and Discounts Management
+
+This section defines the backend API for the Offers and Discounts management screen (`OffersManagementScreen`) and the Create / Edit offer screen (`AddEditOfferScreen`) in the Manager App, alongside the customer cart coupon validation and menu strikethrough pricing APIs.
+
+All manager endpoints require a Sanctum Bearer token for an active `super_admin` staff account (`auth:staff_api`, `staff.role:super_admin`). Customer endpoints are public and do not require manager authentication.
+
+### Endpoints summary
+
+| Method          | Endpoint                                    | Access  | Purpose                                                                          |
+| --------------- | ------------------------------------------- | ------- | -------------------------------------------------------------------------------- |
+| `GET`           | `/api/v1/manager/offers/stats`              | Manager | KPI summary metrics (active, scheduled, expired, and savings)                    |
+| `GET`           | `/api/v1/manager/offers`                    | Manager | Filterable, paginated list of offers (`all`, `active`, `scheduled`, `expired`)   |
+| `GET`           | `/api/v1/manager/offers/{id}`               | Manager | Full offer details with linked product IDs and coupon configuration              |
+| `POST`          | `/api/v1/manager/offers`                    | Manager | Create a new promotional coupon code or automatic menu discount                  |
+| `PUT` / `PATCH` | `/api/v1/manager/offers/{id}`               | Manager | Update existing offer parameters, percentage, caps, or linked products           |
+| `PATCH`         | `/api/v1/manager/offers/{id}/toggle-status` | Manager | Immediately enable or disable offer active status                                |
+| `DELETE`        | `/api/v1/manager/offers/{id}`               | Manager | Delete unused offer, or soft-delete (archive) if redemption logs exist           |
+| `POST`          | `/api/v1/customer/cart/apply-coupon`        | Public  | Validate promotional code, enforce per-customer usage limits, calculate discount |
+| `GET`           | `/api/v1/customer/menu/discounted-items`    | Public  | Menu items with active automatic discounts and strikethrough pricing             |
+
+---
+
+### Get offers KPI summary and statistics
+
+`GET /api/v1/manager/offers/stats`
+
+Returns status counters and today's total discounts given.
+
+#### Headers
+
+```http
+Accept: application/json
+Authorization: Bearer <manager_access_token>
+```
+
+#### Response `200 OK`
+
+```json
+{
+    "data": {
+        "active_offers_count": 3,
+        "scheduled_offers_count": 1,
+        "expired_offers_count": 2,
+        "total_offers_count": 6,
+        "total_discounts_saved_today": "240.00",
+        "currency": "SAR",
+        "unified_rules_enabled": true
+    }
+}
+```
+
+- `active_offers_count`: Offers where `is_active = true`, `starts_at <= now`, and not expired.
+- `scheduled_offers_count`: Offers where `is_active = true` and `starts_at > now`.
+- `expired_offers_count`: Inactive offers or past their expiration date.
+- `total_discounts_saved_today`: Sum of `final_discount_given` from redemption logs recorded today (`Asia/Riyadh`).
+
+---
+
+### List offers with filters
+
+`GET /api/v1/manager/offers`
+
+Retrieves promotional offers with optional status, mechanism, search filters, and pagination.
+
+#### Query parameters
+
+| Parameter  | Type    | Default | Description                                               |
+| ---------- | ------- | ------- | --------------------------------------------------------- |
+| `status`   | string  | `all`   | Filter by status: `all`, `active`, `scheduled`, `expired` |
+| `type`     | string  | `all`   | Filter by type: `all`, `coupon`, `auto_discount`          |
+| `search`   | string  | null    | Search text matching offer title or coupon code           |
+| `page`     | integer | `1`     | Page number                                               |
+| `per_page` | integer | `20`    | Results per page (1–100)                                  |
+
+#### Response `200 OK`
+
+```json
+{
+    "data": [
+        {
+            "id": 1,
+            "title": "كوبون ترحيبي للعملاء الجدد",
+            "description": "خصم 20% على إجمالي الطلب مع تحديد سقف أقصى للخصم والحد الأدنى",
+            "type": "coupon",
+            "type_label": "كوبون خصم",
+            "status": "active",
+            "status_label": "نشط الآن",
+            "discount_percentage": 20.0,
+            "max_discount_cap": "20.00",
+            "min_order_amount": "80.00",
+            "currency": "SAR",
+            "coupon": {
+                "code": "WELCOME20",
+                "usage_limit_per_user": "once",
+                "usage_limit_label": "مرة واحدة لكل عميل",
+                "total_used_count": 48
+            },
+            "is_valid_in_cart": true,
+            "is_ongoing": true,
+            "starts_at": "2026-10-01T00:00:00Z",
+            "ends_at": null,
+            "target_scope": "cart",
+            "target_scope_label": "سلة المشتريات بالكامل",
+            "sample_product": null
+        },
+        {
+            "id": 2,
+            "title": "خصم 15% على قسم فتة ورق عنب",
+            "description": "يطبق مباشرة في المنيو بدون إدخال أي كود",
+            "type": "auto_discount",
+            "type_label": "خصم تلقائي على المنتجات",
+            "status": "active",
+            "status_label": "نشط الآن",
+            "discount_percentage": 15.0,
+            "max_discount_cap": "15.00",
+            "min_order_amount": "0.00",
+            "currency": "SAR",
+            "coupon": null,
+            "is_valid_in_cart": true,
+            "is_ongoing": true,
+            "starts_at": "2026-10-15T00:00:00Z",
+            "ends_at": null,
+            "target_scope": "category",
+            "target_scope_label": "قسم الفتات والمقبلات",
+            "sample_product": {
+                "name": "فتة ورق عنب ملكية",
+                "original_price": "20.00",
+                "discounted_price": "17.00"
+            }
+        }
+    ],
+    "links": {
+        "first": "...?page=1",
+        "last": "...?page=1",
+        "prev": null,
+        "next": null
+    },
+    "meta": {
+        "current_page": 1,
+        "from": 1,
+        "last_page": 1,
+        "per_page": 20,
+        "to": 2,
+        "total": 2
+    }
+}
+```
+
+---
+
+### Get single offer details
+
+`GET /api/v1/manager/offers/{id}`
+
+Retrieves complete configuration for the edit screen (`AddEditOfferScreen`).
+
+#### Response `200 OK`
+
+```json
+{
+    "data": {
+        "id": 1,
+        "title": "كوبون ترحيبي للعملاء الجدد",
+        "description": "خصم 20% على إجمالي الطلب مع تحديد سقف أقصى للخصم والحد الأدنى",
+        "type": "coupon",
+        "discount_scope": "cart",
+        "discount_percentage": 20.0,
+        "max_discount_cap": "20.00",
+        "min_order_amount": "80.00",
+        "is_active": true,
+        "is_ongoing": true,
+        "starts_at": "2026-10-01T00:00:00Z",
+        "ends_at": null,
+        "coupon": {
+            "code": "WELCOME20",
+            "usage_limit_per_user": "once",
+            "total_usage_limit": null,
+            "total_used_count": 48
+        },
+        "selected_product_ids": [],
+        "selected_category_id": null
+    }
+}
+```
+
+---
+
+### Create new offer or coupon
+
+`POST /api/v1/manager/offers`
+
+Creates an offer campaign. Coupons are stored in uppercase.
+
+#### Validation rules
+
+| Field                         | Type     | Required | Rules & Constraints                                                      |
+| ----------------------------- | -------- | -------- | ------------------------------------------------------------------------ |
+| `title`                       | string   | **Yes**  | Min 3, max 255 characters                                                |
+| `description`                 | string   | No       | Optional description text                                                |
+| `type`                        | string   | **Yes**  | `coupon` or `auto_discount`                                              |
+| `discount_scope`              | string   | **Yes**  | `cart`, `specific_products`, or `category`                               |
+| `discount_percentage`         | numeric  | **Yes**  | 1.0 to 100.0                                                             |
+| `max_discount_cap`            | numeric  | **Yes**  | Mandatory maximum discount cap in SAR (must be `> 0`)                    |
+| `min_order_amount`            | numeric  | No       | Minimum order amount floor in SAR; defaults to `0.00`                    |
+| `is_active`                   | boolean  | No       | Defaults to `true`                                                       |
+| `is_ongoing`                  | boolean  | No       | Defaults to `true`                                                       |
+| `starts_at`                   | datetime | **Yes**  | Start date/time (ISO-8601)                                               |
+| `ends_at`                     | datetime | Cond.    | Required if `is_ongoing = false`; must be after `starts_at`              |
+| `coupon.code`                 | string   | Cond.    | Required if `type = coupon`; uppercase, alphanumeric, 3–32 chars, unique |
+| `coupon.usage_limit_per_user` | string   | Cond.    | Required if `type = coupon`; `once`, `twice`, `three_times`, `unlimited` |
+| `coupon.total_usage_limit`    | integer  | No       | Optional store-wide redemption ceiling                                   |
+| `product_ids`                 | array    | Cond.    | Required if `discount_scope = specific_products`; valid product IDs      |
+| `category_id`                 | integer  | Cond.    | Required if `discount_scope = category`; valid category ID               |
+
+#### Request body (Example: Promotional Coupon)
+
+```json
+{
+    "title": "خصم الجمعة المباركة",
+    "description": "خصم خاص على جميع الطلبات أيام الجمعة",
+    "type": "coupon",
+    "discount_scope": "cart",
+    "discount_percentage": 20.0,
+    "max_discount_cap": "25.00",
+    "min_order_amount": "90.00",
+    "is_active": true,
+    "is_ongoing": false,
+    "starts_at": "2026-11-06T00:00:00Z",
+    "ends_at": "2026-11-07T23:59:59Z",
+    "coupon": {
+        "code": "JUMAH20",
+        "usage_limit_per_user": "once"
+    }
+}
+```
+
+#### Request body (Example: Auto Discount on Products)
+
+```json
+{
+    "title": "خصم بوكسات ورق العنب العائلي",
+    "description": "تخفيض مباشر في قائمة الطعام",
+    "type": "auto_discount",
+    "discount_scope": "specific_products",
+    "discount_percentage": 25.0,
+    "max_discount_cap": "30.00",
+    "min_order_amount": "0.00",
+    "is_active": true,
+    "is_ongoing": true,
+    "starts_at": "2026-11-01T00:00:00Z",
+    "product_ids": [101, 102]
+}
+```
+
+#### Response `201 Created`
+
+```json
+{
+    "data": {
+        "id": 5,
+        "title": "خصم الجمعة المباركة",
+        "type": "coupon",
+        "code": "JUMAH20",
+        "discount_percentage": 20.0,
+        "max_discount_cap": "25.00",
+        "status": "scheduled",
+        "status_label": "مجدول"
+    },
+    "message": "تم إنشاء ونشر العرض الترويجي بنجاح"
+}
+```
+
+---
+
+### Update existing offer
+
+`PUT /api/v1/manager/offers/{id}` or `PATCH /api/v1/manager/offers/{id}`
+
+Updates an existing offer's fields, caps, or coupon configuration. All fields are optional.
+
+#### Response `200 OK`
+
+```json
+{
+    "data": {
+        "id": 1,
+        "title": "كوبون ترحيبي محدث",
+        "description": "خصم 25%",
+        "type": "coupon",
+        "discount_scope": "cart",
+        "discount_percentage": 25.0,
+        "max_discount_cap": "30.00",
+        "min_order_amount": "80.00",
+        "is_active": true,
+        "is_ongoing": true,
+        "starts_at": "2026-10-01T00:00:00Z",
+        "ends_at": null,
+        "coupon": {
+            "code": "NEWCODE25",
+            "usage_limit_per_user": "once",
+            "total_usage_limit": null,
+            "total_used_count": 48
+        },
+        "selected_product_ids": [],
+        "selected_category_id": null
+    },
+    "message": "تم تحديث العرض الترويجي بنجاح"
+}
+```
+
+---
+
+### Toggle offer active status
+
+`PATCH /api/v1/manager/offers/{id}/toggle-status`
+
+Instantly enables or disables an offer without altering any parameters.
+
+#### Request body
+
+```json
+{
+    "is_active": false
+}
+```
+
+#### Response `200 OK`
+
+```json
+{
+    "data": {
+        "id": 1,
+        "is_active": false,
+        "status": "expired",
+        "status_label": "معطّل مؤقتاً"
+    },
+    "message": "تم تعطيل العرض الترويجي بنجاح"
+}
+```
+
+---
+
+### Delete or archive offer
+
+`DELETE /api/v1/manager/offers/{id}`
+
+- If the offer has redemption logs (`offer_redemption_logs`), it is soft-deleted (archived) to preserve historical accounting and order audits.
+- If it has never been redeemed, it is hard-deleted from the database.
+
+#### Response `200 OK` (when archived)
+
+```json
+{
+    "message": "تم أرشفة العرض الترويجي لأنه يحتوي على سجلات استخدام"
+}
+```
+
+#### Response `200 OK` (when deleted)
+
+```json
+{
+    "message": "تم حذف العرض الترويجي بنجاح"
+}
+```
+
+---
+
+### Customer Checkout: Validate coupon code
+
+`POST /api/v1/customer/cart/apply-coupon`
+
+Validates a promotional code entered by the customer in checkout. Public endpoint; no bearer token required.
+
+#### Request body
+
+```json
+{
+    "coupon_code": "WELCOME20",
+    "customer_phone": "0530697231",
+    "cart_subtotal": "95.00"
+}
+```
+
+#### Response `200 OK` (Valid coupon)
+
+```json
+{
+    "data": {
+        "is_valid": true,
+        "coupon_code": "WELCOME20",
+        "discount_percentage": 20.0,
+        "raw_calculated_discount": "19.00",
+        "max_discount_cap": "20.00",
+        "final_discount_amount": "19.00",
+        "discounted_subtotal": "76.00",
+        "currency": "SAR",
+        "message": "تم تطبيق كود الخصم بنجاح: خصم 19.00 ر.س"
+    }
+}
+```
+
+#### Error Response `422 Unprocessable Content` (Limit exceeded)
+
+```json
+{
+    "data": {
+        "is_valid": false
+    },
+    "message": "لقد قمت باستخدام هذا الكوبون مسبقاً، ولا يمكن تكراره لنفس رقم الجوال",
+    "code": "COUPON_USAGE_LIMIT_EXCEEDED"
+}
+```
+
+---
+
+### Customer Menu: Discounted items with strikethrough pricing
+
+`GET /api/v1/customer/menu/discounted-items`
+
+Returns all menu items that currently have an active automatic discount offer (`auto_discount`) applied, with original prices, discounted prices, and discount badges.
+
+#### Response `200 OK`
+
+```json
+{
+    "data": [
+        {
+            "product_id": 101,
+            "product_name": "ورق عنب بلدي بدبس الرمان",
+            "original_price": "40.00",
+            "discounted_price": "32.00",
+            "saved_amount": "8.00",
+            "discount_badge": "خصم 20%",
+            "currency": "SAR"
+        }
+    ]
+}
+```
+
+---
+
+### Error codes reference
+
+| HTTP Status | Error Code                    | Client Message (Arabic)                                            |
+| ----------- | ----------------------------- | ------------------------------------------------------------------ |
+| `400`       | `COUPONS_CANNOT_BE_STACKED`   | لا يمكن دمج أكثر من كوبون في الطلب الواحد                          |
+| `404`       | `OFFER_NOT_FOUND`             | العرض الترويجي المطلوب غير موجود                                   |
+| `404`       | `COUPON_NOT_FOUND`            | كود الكوبون المدخل غير صحيح                                        |
+| `409`       | `COUPON_CODE_ALREADY_EXISTS`  | رمز الكوبون مسجل مسبقاً، يرجى اختيار رمز آخر                       |
+| `422`       | `MINIMUM_ORDER_NOT_MET`       | لم تبلغ قيمة السلة الحد الأدنى لتفعيل الكوبون (الحد الأدنى: X ر.س) |
+| `422`       | `COUPON_USAGE_LIMIT_EXCEEDED` | تم تجاوز الحد الأقصى لاستخدام الكوبون لهذا العميل                  |
+| `422`       | `OFFER_EXPIRED`               | انتهت صلاحية هذا العرض الترويجي                                    |
+| `422`       | `MISSING_MAX_CAP`             | تحديد سقف الخصم الأقصى (الكاب) إلزامي لحماية أرباح المطعم          |

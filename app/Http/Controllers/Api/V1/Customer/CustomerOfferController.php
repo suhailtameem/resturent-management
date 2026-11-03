@@ -132,7 +132,7 @@ class CustomerOfferController extends Controller
 
             foreach ($products as $product) {
                 /** @var Product $product */
-                if (! $product || ! $product->is_available || isset($productMap[$product->id])) {
+                if (! $product || ! $product->is_available) {
                     continue;
                 }
 
@@ -141,15 +141,22 @@ class CustomerOfferController extends Controller
                 $finalDiscount = min($rawDiscount, $maxCap);
                 $discountedPrice = round($originalPrice - $finalDiscount, 2);
 
-                $productMap[$product->id] = [
+                $candidate = [
                     'product_id' => (int) $product->id,
                     'product_name' => $product->name_ar,
                     'original_price' => number_format($originalPrice, 2, '.', ''),
                     'discounted_price' => number_format($discountedPrice, 2, '.', ''),
                     'saved_amount' => number_format($finalDiscount, 2, '.', ''),
                     'discount_badge' => 'خصم '.rtrim(rtrim(number_format($discountPct, 2, '.', ''), '0'), '.').'%',
+                    'discount_percentage' => $discountPct,
+                    'max_discount_cap' => number_format($maxCap, 2, '.', ''),
+                    'offer_id' => (int) $offer->id,
+                    'offer_title' => $offer->title,
                     'currency' => 'SAR',
                 ];
+                if (! isset($productMap[$product->id]) || (float) $candidate['saved_amount'] > (float) $productMap[$product->id]['saved_amount']) {
+                    $productMap[$product->id] = $candidate;
+                }
             }
         }
 

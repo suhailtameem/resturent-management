@@ -37,6 +37,9 @@ class ProductResource extends JsonResource
             'price' => (float) ($this->has_discount && (float) $this->discounted_price > 0
                 ? min((float) $this->base_price, (float) $this->discounted_price)
                 : $this->base_price),
+            'has_discount' => (bool) $this->has_discount,
+            'discount_percentage' => (float) $this->discount_percentage,
+            'original_price' => (float) $this->base_price,
             'sizes' => $this->whenLoaded('variants', fn () => $this->variants
                 ->map(fn ($variant) => [
                     'id' => (string) $variant->id,

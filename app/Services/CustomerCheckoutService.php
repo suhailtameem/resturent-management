@@ -7,8 +7,12 @@ use App\Exceptions\CustomerApiException;
 use App\Http\Resources\ManagerOrderSummaryResource;
 use App\Models\Coupon;
 use App\Models\CouponRedemption;
+use App\Models\CouponUsage;
 use App\Models\CustomerAddress;
 use App\Models\DeliveryNeighborhood;
+use App\Models\Offer;
+use App\Models\OfferCouponConfig;
+use App\Models\OfferRedemptionLog;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\OrderStatusLog;
@@ -62,7 +66,7 @@ class CustomerCheckoutService
             ->first();
 
         if ($existingOrder) {
-            return ['order' => $existingOrder->load(['items.options', 'deliveryAddress', 'statusLogs']), 'created' => false];
+            return ['order' => $existingOrder->load(['items.options', 'deliveryAddress', 'statusLogs', 'coupon', 'couponUsages.couponConfig']), 'created' => false];
         }
 
         try {
@@ -168,6 +172,18 @@ class CustomerCheckoutService
                     $orderItem->options()->createMany($itemData['options']);
                 }
 
+                collect($totals['items'])
+                    ->filter(fn (array $itemData) => ! empty($itemData['auto_offer_id']) && (float) $itemData['auto_offer_discount'] > 0)
+                    ->groupBy('auto_offer_id')
+                    ->each(function ($offerItems, $offerId) use ($order): void {
+                        OfferRedemptionLog::create([
+                            'offer_id' => (int) $offerId,
+                            'order_id' => $order->id,
+                            'original_amount' => $offerItems->sum('auto_offer_original_amount'),
+                            'final_discount_given' => $offerItems->sum('auto_offer_discount'),
+                        ]);
+                    });
+
                 OrderStatusLog::create([
                     'order_id' => $order->id,
                     'to_status' => 'received',
@@ -182,7 +198,25 @@ class CustomerCheckoutService
                     ]);
                 }
 
-                return ['order' => $order->load(['items.options', 'deliveryAddress', 'statusLogs']), 'created' => true];
+                if (isset($totals['offer_coupon']['id'])) {
+                    $couponConfig = OfferCouponConfig::query()->lockForUpdate()->findOrFail($totals['offer_coupon']['id']);
+                    CouponUsage::create([
+                        'coupon_config_id' => $couponConfig->id,
+                        'order_id' => $order->id,
+                        'customer_id' => $user->id,
+                        'customer_phone' => (string) ($input['contact_phone'] ?? $user->phone ?? ''),
+                        'discount_amount_applied' => $totals['coupon_discount'],
+                    ]);
+                    $couponConfig->increment('total_used_count');
+                    OfferRedemptionLog::create([
+                        'offer_id' => $couponConfig->offer_id,
+                        'order_id' => $order->id,
+                        'original_amount' => $totals['coupon_eligible_subtotal'],
+                        'final_discount_given' => $totals['coupon_discount'],
+                    ]);
+                }
+
+                return ['order' => $order->load(['items.options', 'deliveryAddress', 'statusLogs', 'coupon', 'couponUsages.couponConfig']), 'created' => true];
             });
         } catch (UniqueConstraintViolationException $exception) {
             $existingOrder = Order::query()
@@ -333,6 +367,8 @@ class CustomerCheckoutService
         $subtotalCents = 0;
         $productDiscountCents = 0;
         $items = [];
+        $autoOffers = Offer::query()->where('type', 'auto_discount')->activeNow()->with('items')->get();
+        $offerCapRemaining = $autoOffers->mapWithKeys(fn (Offer $offer) => [$offer->id => $this->toCents($offer->max_discount_cap)])->all();
 
         foreach ($input['items'] as $index => $item) {
             $product = Product::query()
@@ -438,12 +474,39 @@ class CustomerCheckoutService
                     : min($basePriceCents, $this->toCents($product->discounted_price) ?: $basePriceCents);
             }
 
-            $optionPriceCents = $options->sum(fn (ProductOption $option) => $this->toCents($option->price));
-            $unitPriceCents = $discountedBaseCents + $optionPriceCents;
             $quantity = (int) $item['quantity'];
-            $lineTotalCents = $unitPriceCents * $quantity;
+            $offerBaseCents = $discountedBaseCents;
+            $matchedOfferId = null;
+            $matchedOfferDiscountCents = 0;
+            foreach ($autoOffers as $offer) {
+                $matches = match ($offer->discount_scope) {
+                    'specific_products' => $offer->items->contains('product_id', $product->id),
+                    'category' => (int) $offer->category_id === (int) $product->category_id,
+                    default => false,
+                };
+                if (! $matches || $offerBaseCents <= 0) {
+                    continue;
+                }
+                $offerDiscount = min(
+                    (int) round($offerBaseCents * (float) $offer->discount_percentage / 100) * $quantity,
+                    $offerCapRemaining[$offer->id] ?? 0,
+                );
+                if ($offerDiscount > $matchedOfferDiscountCents) {
+                    $matchedOfferId = $offer->id;
+                    $matchedOfferDiscountCents = $offerDiscount;
+                }
+            }
+            if ($matchedOfferId !== null && $matchedOfferDiscountCents > 0) {
+                $offerCapRemaining[$matchedOfferId] -= $matchedOfferDiscountCents;
+                $offerBaseCents -= intdiv($matchedOfferDiscountCents, $quantity);
+            }
+
+            $optionPriceCents = $options->sum(fn (ProductOption $option) => $this->toCents($option->price));
+            $unitPriceCents = $offerBaseCents + $optionPriceCents;
+            $autoOfferRemainderCents = $matchedOfferDiscountCents % $quantity;
+            $lineTotalCents = $unitPriceCents * $quantity - $autoOfferRemainderCents;
             $subtotalCents += ($basePriceCents + $optionPriceCents) * $quantity;
-            $productDiscountCents += ($basePriceCents - $discountedBaseCents) * $quantity;
+            $productDiscountCents += ($basePriceCents - $discountedBaseCents) * $quantity + $matchedOfferDiscountCents;
 
             $items[] = [
                 'product_id' => $product->id,
@@ -457,6 +520,9 @@ class CustomerCheckoutService
                 'quantity' => $quantity,
                 'unit_price' => $this->fromCents($unitPriceCents),
                 'line_total' => $this->fromCents($lineTotalCents),
+                'auto_offer_id' => $matchedOfferId,
+                'auto_offer_original_amount' => $this->fromCents($discountedBaseCents * $quantity),
+                'auto_offer_discount' => $this->fromCents($matchedOfferDiscountCents),
                 'special_instructions' => $item['special_instructions'] ?? null,
                 'options' => $options->map(fn (ProductOption $option) => [
                     'option_id' => $option->id,
@@ -468,51 +534,83 @@ class CustomerCheckoutService
         }
 
         $coupon = null;
+        $offerCoupon = null;
         $couponDiscountCents = 0;
         if (! empty($input['coupon_code'])) {
-            $couponQuery = Coupon::query()
+            $offerCouponQuery = OfferCouponConfig::query()
                 ->where('code', Str::upper($input['coupon_code']))
-                ->where('is_active', true)
-                ->whereDate('start_date', '<=', today())
-                ->whereDate('end_date', '>=', today());
+                ->with('offer');
             if ($lockCoupon) {
-                $couponQuery->lockForUpdate();
+                $offerCouponQuery->lockForUpdate();
             }
-            $couponModel = $couponQuery->first();
+            $offerCouponConfig = $offerCouponQuery->first();
 
-            if (! $couponModel) {
-                throw new CustomerApiException('The coupon is invalid or expired.', 'COUPON_INVALID', 422);
-            }
-
-            $eligibleSubtotalCents = $subtotalCents - $productDiscountCents;
-            if ($eligibleSubtotalCents < $this->toCents($couponModel->min_order_value)) {
-                throw new CustomerApiException('The minimum order amount for this coupon was not met.', 'COUPON_INVALID', 422);
-            }
-
-            if ($productDiscountCents > 0 && ! $couponModel->allow_combine_with_product_discount) {
-                throw new CustomerApiException('This coupon cannot be combined with product discounts.', 'COUPON_INVALID', 422);
-            }
-
-            $redemptions = CouponRedemption::query()->where('coupon_id', $couponModel->id);
-            if ($couponModel->usage_limit_total !== null && (clone $redemptions)->count() >= $couponModel->usage_limit_total) {
-                throw new CustomerApiException('The coupon usage limit has been reached.', 'COUPON_INVALID', 422);
-            }
-            if ((clone $redemptions)->where('user_id', $user->id)->count() >= $couponModel->usage_limit_per_user) {
-                throw new CustomerApiException('The coupon usage limit for this customer has been reached.', 'COUPON_INVALID', 422);
-            }
-
-            $discountValue = (float) $couponModel->discount_value;
-            $couponDiscountCents = $couponModel->discount_type === 'percentage'
-                ? (int) round($eligibleSubtotalCents * $discountValue / 100)
-                : $this->toCents($discountValue);
-            if ($couponModel->maximum_discount_amount !== null) {
+            if ($offerCouponConfig) {
+                $offer = $offerCouponConfig->offer;
+                $eligibleSubtotalCents = $subtotalCents - $productDiscountCents;
+                $maxUses = $offerCouponConfig->getMaxUsesPerUser();
+                $usageQuery = $offerCouponConfig->usages();
+                if ($offerCouponConfig->total_usage_limit !== null && $offerCouponConfig->total_used_count >= $offerCouponConfig->total_usage_limit) {
+                    throw new CustomerApiException('The coupon usage limit has been reached.', 'COUPON_INVALID', 422);
+                }
+                if ($maxUses !== null && (clone $usageQuery)->where('customer_id', $user->id)->count() >= $maxUses) {
+                    throw new CustomerApiException('The coupon usage limit for this customer has been reached.', 'COUPON_INVALID', 422);
+                }
+                if (! $offer || ! $offer->isValidNow() || $eligibleSubtotalCents < $this->toCents($offer->min_order_amount)) {
+                    throw new CustomerApiException('The coupon is invalid, expired, or its minimum order was not met.', 'COUPON_INVALID', 422);
+                }
                 $couponDiscountCents = min(
-                    $couponDiscountCents,
-                    $this->toCents($couponModel->maximum_discount_amount),
+                    (int) round($eligibleSubtotalCents * (float) $offer->discount_percentage / 100),
+                    $this->toCents($offer->max_discount_cap),
+                    $eligibleSubtotalCents,
                 );
+                $coupon = ['code' => $offerCouponConfig->code, 'is_valid' => true];
+                $offerCoupon = ['id' => $offerCouponConfig->id];
+            } else {
+                $couponQuery = Coupon::query()
+                    ->where('code', Str::upper($input['coupon_code']))
+                    ->where('is_active', true)
+                    ->whereDate('start_date', '<=', today())
+                    ->whereDate('end_date', '>=', today());
+                if ($lockCoupon) {
+                    $couponQuery->lockForUpdate();
+                }
+                $couponModel = $couponQuery->first();
+
+                if (! $couponModel) {
+                    throw new CustomerApiException('The coupon is invalid or expired.', 'COUPON_INVALID', 422);
+                }
+
+                $eligibleSubtotalCents = $subtotalCents - $productDiscountCents;
+                if ($eligibleSubtotalCents < $this->toCents($couponModel->min_order_value)) {
+                    throw new CustomerApiException('The minimum order amount for this coupon was not met.', 'COUPON_INVALID', 422);
+                }
+
+                if ($productDiscountCents > 0 && ! $couponModel->allow_combine_with_product_discount) {
+                    throw new CustomerApiException('This coupon cannot be combined with product discounts.', 'COUPON_INVALID', 422);
+                }
+
+                $redemptions = CouponRedemption::query()->where('coupon_id', $couponModel->id);
+                if ($couponModel->usage_limit_total !== null && (clone $redemptions)->count() >= $couponModel->usage_limit_total) {
+                    throw new CustomerApiException('The coupon usage limit has been reached.', 'COUPON_INVALID', 422);
+                }
+                if ((clone $redemptions)->where('user_id', $user->id)->count() >= $couponModel->usage_limit_per_user) {
+                    throw new CustomerApiException('The coupon usage limit for this customer has been reached.', 'COUPON_INVALID', 422);
+                }
+
+                $discountValue = (float) $couponModel->discount_value;
+                $couponDiscountCents = $couponModel->discount_type === 'percentage'
+                    ? (int) round($eligibleSubtotalCents * $discountValue / 100)
+                    : $this->toCents($discountValue);
+                if ($couponModel->maximum_discount_amount !== null) {
+                    $couponDiscountCents = min(
+                        $couponDiscountCents,
+                        $this->toCents($couponModel->maximum_discount_amount),
+                    );
+                }
+                $couponDiscountCents = min($couponDiscountCents, $eligibleSubtotalCents);
+                $coupon = ['id' => $couponModel->id, 'code' => $couponModel->code, 'is_valid' => true];
             }
-            $couponDiscountCents = min($couponDiscountCents, $eligibleSubtotalCents);
-            $coupon = ['id' => $couponModel->id, 'code' => $couponModel->code, 'is_valid' => true];
         }
 
         if ($deliveryMode === 'delivery' && $neighborhood) {
@@ -545,6 +643,8 @@ class CustomerCheckoutService
             ...$settings->currencyData(),
             'estimated_prep_time_minutes' => $operation->estimatedPrepTime(),
             'coupon' => $coupon,
+            'offer_coupon' => $offerCoupon,
+            'coupon_eligible_subtotal' => $this->fromCents($subtotalCents - $productDiscountCents),
         ];
     }
 
@@ -620,6 +720,7 @@ class CustomerCheckoutService
         if (isset($totals['coupon']['id'])) {
             unset($totals['coupon']['id']);
         }
+        unset($totals['offer_coupon'], $totals['coupon_eligible_subtotal']);
         unset($totals['delivery_address_id']);
 
         return $totals;

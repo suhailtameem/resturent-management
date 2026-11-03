@@ -399,6 +399,14 @@ class ManagerOrderController extends Controller
             ]);
 
             CouponRedemption::query()->where('order_id', $locked->id)->delete();
+            $usages = $locked->couponUsages()->with('couponConfig')->get();
+            foreach ($usages as $usage) {
+                if ($usage->couponConfig && $usage->couponConfig->total_used_count > 0) {
+                    $usage->couponConfig->decrement('total_used_count');
+                }
+            }
+            $locked->couponUsages()->delete();
+            $locked->offerRedemptionLogs()->delete();
 
             OrderStatusLog::create([
                 'order_id' => $locked->id,

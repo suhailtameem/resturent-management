@@ -19,7 +19,7 @@ class CustomerOrderController extends Controller
     {
         $orders = $request->user()
             ->orders()
-            ->with(['items.options', 'deliveryAddress', 'statusLogs'])
+            ->with(['items.options', 'deliveryAddress', 'statusLogs', 'couponUsages.couponConfig', 'coupon'])
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->paginate(20);
@@ -31,7 +31,7 @@ class CustomerOrderController extends Controller
     {
         $order = $request->user()
             ->orders()
-            ->with(['items.options', 'deliveryAddress', 'statusLogs'])
+            ->with(['items.options', 'deliveryAddress', 'statusLogs', 'couponUsages.couponConfig', 'coupon'])
             ->whereKey($order->id)
             ->firstOrFail();
 
@@ -93,6 +93,7 @@ class CustomerOrderController extends Controller
             $fromStatus = $ownedOrder->order_status;
             $ownedOrder->update(['order_status' => 'cancelled']);
             CouponRedemption::query()->where('order_id', $ownedOrder->id)->delete();
+            $this->releaseOfferRedemptions($ownedOrder);
             OrderStatusLog::create([
                 'order_id' => $ownedOrder->id,
                 'from_status' => $fromStatus,
@@ -104,5 +105,17 @@ class CustomerOrderController extends Controller
         });
 
         return new OrderResource($order);
+    }
+
+    private function releaseOfferRedemptions(Order $order): void
+    {
+        $usages = $order->couponUsages()->with('couponConfig')->get();
+        foreach ($usages as $usage) {
+            if ($usage->couponConfig && $usage->couponConfig->total_used_count > 0) {
+                $usage->couponConfig->decrement('total_used_count');
+            }
+        }
+        $order->couponUsages()->delete();
+        $order->offerRedemptionLogs()->delete();
     }
 }

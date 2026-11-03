@@ -72,6 +72,16 @@ class Order extends Model
         return $this->belongsTo(Coupon::class);
     }
 
+    public function couponUsages(): HasMany
+    {
+        return $this->hasMany(CouponUsage::class);
+    }
+
+    public function offerRedemptionLogs(): HasMany
+    {
+        return $this->hasMany(OfferRedemptionLog::class);
+    }
+
     public function deliveryAddress(): BelongsTo
     {
         return $this->belongsTo(CustomerAddress::class, 'delivery_address_id');

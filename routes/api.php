@@ -66,6 +66,9 @@ Route::prefix('v1')->group(function () {
         // Revoke the current manager access token.
         Route::post('/auth/logout', [ManagerAuthController::class, 'logout'])->middleware('auth:staff_api');
 
+        // Return the configured currency labels for authenticated staff screens.
+        Route::get('/store/currency-labels', [ManagerStoreSettingsController::class, 'showCurrency'])->middleware('auth:staff_api');
+
         Route::prefix('courier')->middleware(['auth:staff_api', 'staff.role:courier'])->group(function () {
             // Return the signed-in courier's availability, assigned orders, and daily totals.
             Route::get('/dashboard', [ManagerCourierController::class, 'dashboard']);
@@ -103,9 +106,6 @@ Route::prefix('v1')->group(function () {
 
             // Update branch/store profile and payment settings.
             Route::patch('/settings', [ManagerStoreSettingsController::class, 'update']);
-
-            // Read the fixed currency and its editable display labels.
-            Route::get('/store/settings', [ManagerStoreSettingsController::class, 'showCurrency']);
 
             // Update display labels without changing the store currency or any monetary amounts.
             Route::patch('/store/settings', [ManagerStoreSettingsController::class, 'updateCurrency']);

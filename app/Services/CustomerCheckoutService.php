@@ -128,8 +128,13 @@ class CustomerCheckoutService
                     );
                 }
 
+                $sequenceId = DB::table('order_number_sequences')->insertGetId([
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
                 $order = Order::create([
-                    'order_number' => 'ORD-'.Str::upper(Str::random(12)),
+                    'order_number' => (string) (10000 + $sequenceId),
                     'user_id' => $user->id,
                     'customer_name' => $user->full_name ?? $user->name,
                     'customer_phone' => $input['contact_phone'] ?? $user->phone,

@@ -214,19 +214,16 @@ class ManagerProductController extends Controller
 
     public function destroy(Product $product): JsonResponse
     {
-        if (DB::table('order_items')->where('product_id', $product->id)->exists()) {
-            return response()->json([
-                'message' => 'This product cannot be deleted because it appears in order history.',
-                'code' => 'PRODUCT_HAS_ORDERS',
-                'errors' => (object) [],
-            ], 409);
-        }
-
         $imagePath = $product->image_url;
 
         DB::transaction(function () use ($product): void {
             $groupIds = $product->optionGroups()->pluck('option_group_id');
+            DB::table('order_items')
+                ->where('product_id', $product->id)
+                ->update(['product_id' => null, 'variant_id' => null]);
+            DB::table('offer_items')->where('product_id', $product->id)->delete();
             $product->optionGroups()->delete();
+            $product->variants()->delete();
             $this->deleteUnusedOptionGroups($groupIds->all());
             $product->delete();
         });

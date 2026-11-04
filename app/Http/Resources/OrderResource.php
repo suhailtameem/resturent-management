@@ -75,7 +75,7 @@ class OrderResource extends JsonResource
             ] : null,
             'items' => $this->whenLoaded('items', fn () => $this->items->map(fn ($item) => [
                 'id' => (string) $item->id,
-                'product_id' => (string) $item->product_id,
+                'product_id' => $item->product_id === null ? null : (string) $item->product_id,
                 'product_name_ar' => $item->product_name_ar_snapshot,
                 'product_name_en' => $item->product_name_en_snapshot,
                 'image_url' => ProductImageUrl::fromStoredValue($item->image_url_snapshot),

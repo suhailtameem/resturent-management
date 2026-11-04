@@ -144,7 +144,7 @@ class ManagerOrderDetailResource extends JsonResource
 
             return [
                 'id' => (int) $item->id,
-                'product_id' => (int) $item->product_id,
+                'product_id' => $item->product_id === null ? null : (int) $item->product_id,
                 'product_name' => $item->product_name_ar_snapshot,
                 'size_name' => $sizeName,
                 'quantity' => (int) $item->quantity,

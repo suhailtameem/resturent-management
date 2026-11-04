@@ -4,6 +4,7 @@ use App\Events\OrderStatusUpdated;
 use App\Models\Category;
 use App\Models\Coupon;
 use App\Models\CouponRedemption;
+use App\Models\CourierCashCollection;
 use App\Models\CustomerAddress;
 use App\Models\Order;
 use App\Models\OrderItem;
@@ -43,6 +44,7 @@ function createCourierStaff(array $attributes = []): StaffUser
         'phone' => '0509988112',
         'vehicle_type' => 'دباب / سكوتر',
         'is_active' => true,
+        'is_available' => true,
     ], $attributes));
 }
 
@@ -362,7 +364,7 @@ it('updates order workflow status and records audit log', function () {
     Event::assertDispatched(OrderStatusUpdated::class, fn (OrderStatusUpdated $event): bool => $event->order['order_number'] === $order->order_number);
 });
 
-it('assigns a courier to an order and updates delivery status', function () {
+it('assigns a courier without dispatching the order before pickup', function () {
     Event::fake([OrderStatusUpdated::class]);
 
     $manager = createManagerStaff();
@@ -377,17 +379,237 @@ it('assigns a courier to an order and updates delivery status', function () {
 
     $response->assertOk()
         ->assertJsonPath('data.order_id', $order->id)
-        ->assertJsonPath('data.status', 'out_for_delivery')
+        ->assertJsonPath('data.status', 'ready')
         ->assertJsonPath('data.driver.id', $courier->id)
         ->assertJsonPath('data.driver.name', 'سعد المطيري');
 
     $this->assertDatabaseHas('orders', [
         'id' => $order->id,
         'courier_id' => $courier->id,
-        'order_status' => 'out_for_delivery',
+        'order_status' => 'ready',
+        'dispatched_at' => null,
     ]);
 
     Event::assertDispatched(OrderStatusUpdated::class, fn (OrderStatusUpdated $event): bool => $event->order['delivery']['driver_name'] === 'سعد المطيري');
+});
+
+it('returns only the signed-in courier orders and dashboard totals', function () {
+    $courier = createCourierStaff();
+    $anotherCourier = createCourierStaff();
+    $assignedOrder = createTestOrder([
+        'courier_id' => $courier->id,
+        'order_status' => 'ready',
+    ]);
+    createTestOrder([
+        'courier_id' => $anotherCourier->id,
+        'order_status' => 'out_for_delivery',
+    ]);
+
+    $this->actingAs($courier, 'staff_api')
+        ->getJson('/api/v1/manager/courier/dashboard')
+        ->assertOk()
+        ->assertJsonPath('data.is_available', true)
+        ->assertJsonPath('data.stats.active_orders_count', 1)
+        ->assertJsonPath('data.stats.pending_cash_amount', '0.00')
+        ->assertJsonPath('data.orders.0.id', $assignedOrder->id)
+        ->assertJsonPath('data.orders.0.status', 'ready')
+        ->assertJsonMissingPath('data.orders.0.delivery.google_maps_url')
+        ->assertJsonMissingPath('data.orders.0.delivery.latitude');
+});
+
+it('allows couriers to update availability but refuses other staff roles', function () {
+    $courier = createCourierStaff();
+    $manager = createManagerStaff();
+
+    $this->actingAs($manager, 'staff_api')
+        ->patchJson('/api/v1/manager/courier/availability', ['is_available' => false])
+        ->assertForbidden();
+
+    $this->actingAs($courier, 'staff_api')
+        ->patchJson('/api/v1/manager/courier/availability', ['is_available' => false])
+        ->assertOk()
+        ->assertJsonPath('data.is_available', false);
+
+    $this->assertDatabaseHas('staff_users', [
+        'id' => $courier->id,
+        'is_available' => false,
+    ]);
+});
+
+it('records courier pickup and delivery with a COD collection and audit trail', function () {
+    Event::fake([OrderStatusUpdated::class]);
+    $courier = createCourierStaff();
+    $order = createTestOrder([
+        'courier_id' => $courier->id,
+        'order_status' => 'ready',
+    ]);
+
+    $this->actingAs($courier, 'staff_api')
+        ->postJson("/api/v1/manager/courier/orders/{$order->id}/pickup")
+        ->assertOk()
+        ->assertJsonPath('data.status', 'out_for_delivery');
+
+    $this->assertDatabaseHas('orders', [
+        'id' => $order->id,
+        'order_status' => 'out_for_delivery',
+    ]);
+    $this->assertDatabaseHas('order_status_logs', [
+        'order_id' => $order->id,
+        'from_status' => 'ready',
+        'to_status' => 'out_for_delivery',
+        'action_by_staff_id' => $courier->id,
+    ]);
+
+    $this->postJson("/api/v1/manager/courier/orders/{$order->id}/deliver")
+        ->assertOk()
+        ->assertJsonPath('data.status', 'completed');
+
+    $this->assertDatabaseHas('orders', [
+        'id' => $order->id,
+        'order_status' => 'delivered',
+        'payment_status' => 'paid',
+    ]);
+    $this->assertDatabaseHas('courier_cash_collections', [
+        'order_id' => $order->id,
+        'courier_id' => $courier->id,
+        'amount' => '69.00',
+    ]);
+    $this->assertDatabaseHas('order_status_logs', [
+        'order_id' => $order->id,
+        'from_status' => 'out_for_delivery',
+        'to_status' => 'delivered',
+        'action_by_staff_id' => $courier->id,
+    ]);
+
+    $this->getJson('/api/v1/manager/courier/dashboard')
+        ->assertOk()
+        ->assertJsonPath('data.stats.active_orders_count', 0)
+        ->assertJsonPath('data.stats.completed_today_count', 1)
+        ->assertJsonPath('data.stats.pending_cash_amount', '69.00')
+        ->assertJsonPath('data.completed_orders.0.id', $order->id)
+        ->assertJsonPath('data.pending_cash_collections.0.order_number', $order->order_number);
+
+    Event::assertDispatched(OrderStatusUpdated::class);
+});
+
+it('prevents couriers from changing an order assigned to another courier', function () {
+    $courier = createCourierStaff();
+    $anotherCourier = createCourierStaff();
+    $order = createTestOrder([
+        'courier_id' => $anotherCourier->id,
+        'order_status' => 'ready',
+    ]);
+
+    $this->actingAs($courier, 'staff_api')
+        ->postJson("/api/v1/manager/courier/orders/{$order->id}/pickup")
+        ->assertNotFound();
+
+    $this->assertDatabaseHas('orders', [
+        'id' => $order->id,
+        'courier_id' => $anotherCourier->id,
+        'order_status' => 'ready',
+    ]);
+});
+
+it('records a courier issue without cancelling the delivery', function () {
+    $courier = createCourierStaff();
+    $order = createTestOrder([
+        'courier_id' => $courier->id,
+        'order_status' => 'out_for_delivery',
+    ]);
+
+    $this->actingAs($courier, 'staff_api')
+        ->postJson("/api/v1/manager/courier/orders/{$order->id}/issues", [
+            'reason' => 'العميل لا يرد على الاتصال',
+        ])
+        ->assertCreated()
+        ->assertJsonPath('data.order_id', $order->id);
+
+    $this->assertDatabaseHas('orders', [
+        'id' => $order->id,
+        'order_status' => 'out_for_delivery',
+    ]);
+    $this->assertDatabaseHas('order_status_logs', [
+        'order_id' => $order->id,
+        'from_status' => 'out_for_delivery',
+        'to_status' => 'out_for_delivery',
+        'notes' => 'بلاغ مندوب: العميل لا يرد على الاتصال',
+    ]);
+
+    $this->getJson('/api/v1/manager/courier/dashboard')
+        ->assertOk()
+        ->assertJsonPath('data.orders.0.delivery_issues.0.reason', 'العميل لا يرد على الاتصال');
+});
+
+it('rejects courier issue reports longer than the audit log can store', function () {
+    $courier = createCourierStaff();
+    $order = createTestOrder([
+        'courier_id' => $courier->id,
+        'order_status' => 'out_for_delivery',
+    ]);
+
+    $this->actingAs($courier, 'staff_api')
+        ->postJson("/api/v1/manager/courier/orders/{$order->id}/issues", [
+            'reason' => str_repeat('x', 256),
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('reason');
+});
+
+it('does not record a cash collection when a courier delivers an online-paid order', function () {
+    $courier = createCourierStaff();
+    $order = createTestOrder([
+        'courier_id' => $courier->id,
+        'order_status' => 'out_for_delivery',
+        'payment_method' => 'apple_pay',
+        'payment_status' => 'paid',
+    ]);
+
+    $this->actingAs($courier, 'staff_api')
+        ->postJson("/api/v1/manager/courier/orders/{$order->id}/deliver")
+        ->assertOk()
+        ->assertJsonPath('data.status', 'completed');
+
+    $this->assertDatabaseCount('courier_cash_collections', 0);
+});
+
+it('reconciles pending courier cash against an auditable manager settlement', function () {
+    $manager = createManagerStaff();
+    $courier = createCourierStaff();
+    $order = createTestOrder([
+        'courier_id' => $courier->id,
+        'order_status' => 'delivered',
+        'payment_status' => 'paid',
+        'delivered_at' => now(),
+    ]);
+    CourierCashCollection::create([
+        'order_id' => $order->id,
+        'courier_id' => $courier->id,
+        'amount' => $order->total_final_amount,
+        'collected_at' => now(),
+    ]);
+
+    $this->actingAs($courier, 'staff_api')
+        ->getJson('/api/v1/manager/courier/dashboard')
+        ->assertOk()
+        ->assertJsonPath('data.stats.pending_cash_amount', '69.00');
+
+    $settlementResponse = $this->actingAs($manager, 'staff_api')
+        ->postJson("/api/v1/manager/drivers/{$courier->id}/cash-settlements")
+        ->assertCreated()
+        ->assertJsonPath('data.orders_count', 1)
+        ->assertJsonPath('data.amount', '69.00');
+    $settlementId = $settlementResponse->json('data.id');
+
+    $this->assertDatabaseHas('courier_cash_collections', [
+        'order_id' => $order->id,
+        'settlement_id' => $settlementId,
+    ]);
+    $this->assertDatabaseHas('courier_cash_settlements', [
+        'courier_id' => $courier->id,
+        'reconciled_by_staff_user_id' => $manager->id,
+        'amount' => '69.00',
+    ]);
 });
 
 it('lists available drivers with active order counts', function () {

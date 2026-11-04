@@ -1176,7 +1176,7 @@ The backend links the Manager App and the Customer App seamlessly:
 - The order appears immediately in the Manager App under the **جديدة (New / Pending)** tab and triggers the KPI `needs_action_count`.
 - When the manager updates the status via `PATCH /api/v1/manager/orders/{order}/status`, the status change is written to `orders.order_status` and audited in `order_status_logs`.
 - The customer tracking endpoint (`GET /api/v1/orders/{order}/track`) and details endpoint (`GET /api/v1/orders/{order}`) reflect the change in real time, preventing customer cancellation once preparation begins (`can_cancel: false`).
-- Assigning a delivery courier (`POST /api/v1/manager/orders/{order}/assign-driver`) sets `courier_id`, updates status to `out_for_delivery` with `dispatched_at` timestamp, which immediately updates the customer's tracking view.
+- Assigning a delivery courier (`POST /api/v1/manager/orders/{order}/assign-driver`) sets `courier_id` without changing the order status. Once the order is ready, the courier confirms pickup to change it to `out_for_delivery` and set `dispatched_at`, which updates the customer's tracking view.
 - When an order is cancelled or rejected (via manager `POST /api/v1/manager/orders/{order}/cancel` or customer `POST /api/v1/orders/{order}/cancel`), any redeemed coupon is automatically restored, and the reason is recorded and returned to the customer.
 
 #### Status Mapping & State Machine
@@ -1215,8 +1215,14 @@ stateDiagram-v2
 | `GET`   | `/api/v1/manager/orders`                       | Paginated orders list with status, payment, delivery mode, search, and sorting             |
 | `GET`   | `/api/v1/manager/orders/{order}`               | Complete order details, customer contact, address GPS, items, add-ons, and 5-step timeline |
 | `PATCH` | `/api/v1/manager/orders/{order}/status`        | Move order to next workflow stage or set status explicitly with notes                      |
-| `POST`  | `/api/v1/manager/orders/{order}/assign-driver` | Assign an active delivery courier to an order and dispatch                                 |
+| `POST`  | `/api/v1/manager/orders/{order}/assign-driver` | Assign an available courier without dispatching the order                                 |
 | `GET`   | `/api/v1/manager/drivers`                      | List active delivery couriers with workload and availability                               |
+| `GET`   | `/api/v1/manager/courier/dashboard`            | Courier-only assigned deliveries and KPI totals                                             |
+| `PATCH` | `/api/v1/manager/courier/availability`         | Courier-only online / offline setting                                                       |
+| `POST`  | `/api/v1/manager/courier/orders/{order}/pickup`| Courier-only confirmation of restaurant pickup                                              |
+| `POST`  | `/api/v1/manager/courier/orders/{order}/deliver`| Courier-only delivery confirmation and COD collection                                      |
+| `POST`  | `/api/v1/manager/courier/orders/{order}/issues`| Courier-only delivery issue audit                                                          |
+| `POST`  | `/api/v1/manager/drivers/{driver}/cash-settlements`| Manager cash reconciliation for one courier                                              |
 | `POST`  | `/api/v1/manager/orders/{order}/cancel`        | Cancel order with cancellation reason and release coupon                                   |
 | `GET`   | `/api/v1/manager/orders/{order}/print-ticket`  | Thermal printer receipt data payload for kitchen (KDS) & invoice printing                  |
 | `GET`   | `/api/v1/manager/orders/poll`                  | Live order polling and background sync endpoint                                            |
@@ -1593,6 +1599,19 @@ Create a courier with `POST /api/v1/manager/drivers`. Required fields are `usern
 Update courier profile fields or reactivate a courier with `PATCH /api/v1/manager/drivers/{driver}`. All fields are optional; `password` requires a matching `password_confirmation` when supplied. Set `is_active` to `true` to reactivate.
 
 Deactivate a courier with `DELETE /api/v1/manager/drivers/{driver}`. This preserves the staff record and order history and revokes the courier's access tokens. Deactivated couriers can no longer log in or receive new order assignments.
+
+#### Courier app endpoints
+
+All courier endpoints require a Bearer token for an active `courier` staff account. They return only orders assigned to the signed-in courier.
+
+- `GET /api/v1/manager/courier/dashboard` returns the courier's availability, assigned ready or in-delivery orders, active task count, outstanding COD cash, and completed orders today. Order details omit GPS coordinates and map URLs.
+- `PATCH /api/v1/manager/courier/availability` accepts `{ "is_available": true }`. The stored availability is used by manager courier assignment.
+- `POST /api/v1/manager/courier/orders/{order}/pickup` moves an assigned ready delivery to `out_for_delivery` and sets `dispatched_at`. Repeating pickup for a delivery already in progress is safe.
+- `POST /api/v1/manager/courier/orders/{order}/deliver` marks an assigned in-delivery order `delivered`, records `delivered_at`, and marks COD payment paid. A COD collection is recorded for manager reconciliation.
+- `POST /api/v1/manager/courier/orders/{order}/issues` requires a `reason` and records an audit entry without cancelling or changing the order status.
+- `POST /api/v1/manager/drivers/{driver}/cash-settlements` is manager-only. It reconciles all outstanding COD collections for that courier and records the manager, amount, order count, and time.
+
+Order assignment and courier pickup are separate steps: assigning alone no longer starts the customer's delivery tracking.
 
 ---
 

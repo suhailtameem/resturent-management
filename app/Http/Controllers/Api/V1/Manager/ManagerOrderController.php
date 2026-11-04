@@ -308,6 +308,7 @@ class ManagerOrderController extends Controller
             ->where('id', $validated['driver_id'])
             ->where('role', 'courier')
             ->where('is_active', true)
+            ->where('is_available', true)
             ->first();
 
         if (! $driver) {
@@ -322,14 +323,6 @@ class ManagerOrderController extends Controller
             $fromStatus = $locked->order_status;
 
             $updateData = ['courier_id' => $driver->id];
-
-            // If order was ready or preparing, dispatching with courier marks it as out_for_delivery
-            if (in_array($locked->order_status, ['ready', 'ready_for_pickup', 'preparing'], true)) {
-                $updateData['order_status'] = 'out_for_delivery';
-                if (! $locked->dispatched_at) {
-                    $updateData['dispatched_at'] = now();
-                }
-            }
 
             $locked->update($updateData);
 

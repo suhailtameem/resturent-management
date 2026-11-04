@@ -29,7 +29,7 @@ class ManagerDriverResource extends JsonResource
             'name' => $this->full_name,
             'phone' => $this->phone,
             'is_active' => (bool) $this->is_active,
-            'is_available' => (bool) $this->is_active && $activeOrdersCount < 5,
+            'is_available' => (bool) $this->is_active && (bool) $this->is_available && $activeOrdersCount < 5,
             'active_orders_count' => $activeOrdersCount,
             'vehicle_type' => $this->vehicle_type ?? 'دباب / سكوتر',
         ];

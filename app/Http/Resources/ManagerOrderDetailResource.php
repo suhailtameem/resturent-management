@@ -233,6 +233,16 @@ class ManagerOrderDetailResource extends JsonResource
             ],
         ];
 
+        $deliveryIssues = $logs
+            ->filter(fn ($log): bool => str_starts_with((string) $log->notes, 'بلاغ مندوب:'))
+            ->map(fn ($log): array => [
+                'id' => (int) $log->id,
+                'reason' => trim(substr((string) $log->notes, strlen('بلاغ مندوب:'))),
+                'reported_at' => $log->created_at?->toIso8601String(),
+            ])
+            ->values()
+            ->all();
+
         $timeline = array_map(function ($step) use ($currentStepIndex, $logTimestamps) {
             $isCompleted = $currentStepIndex >= 0 && $currentStepIndex >= $step['step_index'];
 
@@ -288,6 +298,7 @@ class ManagerOrderDetailResource extends JsonResource
             ],
 
             'items' => $items,
+            'delivery_issues' => $deliveryIssues,
             'financials' => $financials,
             'timeline' => $timeline,
         ];

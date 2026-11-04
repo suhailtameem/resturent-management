@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\V1\Customer\ProductController;
 use App\Http\Controllers\Api\V1\DeviceTokenController;
 use App\Http\Controllers\Api\V1\Manager\ManagerAuthController;
 use App\Http\Controllers\Api\V1\Manager\ManagerCategoryController;
+use App\Http\Controllers\Api\V1\Manager\ManagerCourierController;
 use App\Http\Controllers\Api\V1\Manager\ManagerCustomerController;
 use App\Http\Controllers\Api\V1\Manager\ManagerDeliveryCityController;
 use App\Http\Controllers\Api\V1\Manager\ManagerDeliveryNeighborhoodController;
@@ -64,6 +65,23 @@ Route::prefix('v1')->group(function () {
 
         // Revoke the current manager access token.
         Route::post('/auth/logout', [ManagerAuthController::class, 'logout'])->middleware('auth:staff_api');
+
+        Route::prefix('courier')->middleware(['auth:staff_api', 'staff.role:courier'])->group(function () {
+            // Return the signed-in courier's availability, assigned orders, and daily totals.
+            Route::get('/dashboard', [ManagerCourierController::class, 'dashboard']);
+
+            // Update whether the signed-in courier can receive new assignments.
+            Route::patch('/availability', [ManagerCourierController::class, 'updateAvailability']);
+
+            // Confirm pickup of an assigned ready order and start its delivery.
+            Route::post('/orders/{order}/pickup', [ManagerCourierController::class, 'pickUp']);
+
+            // Confirm delivery of an assigned order and record COD collection when applicable.
+            Route::post('/orders/{order}/deliver', [ManagerCourierController::class, 'deliver']);
+
+            // Record a delivery issue without cancelling or changing the order status.
+            Route::post('/orders/{order}/issues', [ManagerCourierController::class, 'reportIssue']);
+        });
 
         Route::middleware(['auth:staff_api', 'staff.role:super_admin'])->group(function () {
             // Return customer-device reach counts for push notifications.
@@ -199,6 +217,9 @@ Route::prefix('v1')->group(function () {
 
             // Deactivate a courier account while preserving order history.
             Route::delete('/drivers/{driver}', [ManagerDriverController::class, 'destroy']);
+
+            // Reconcile all pending cash collected by a courier.
+            Route::post('/drivers/{driver}/cash-settlements', [ManagerDriverController::class, 'settleCash']);
 
             // Export customers using the current list filters as UTF-8 CSV.
             Route::get('/customers/export', [ManagerCustomerController::class, 'export']);

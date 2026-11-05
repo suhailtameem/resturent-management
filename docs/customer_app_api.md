@@ -145,7 +145,7 @@ Optional query parameters:
 | `best_seller` | boolean | Filter by best-seller flag                                           |
 | `per_page`    | integer | 1–50; defaults to 20                                                 |
 
-Only available products in active categories are returned. Results are ordered by `sort_order`, then ID, and use Laravel pagination (`data`, `links`, and `meta`).
+Only available products in active categories are returned. Results are ordered by category `sort_order` and category ID, then product `sort_order` and product ID. Results use Laravel pagination (`data`, `links`, and `meta`).
 
 Product fields:
 

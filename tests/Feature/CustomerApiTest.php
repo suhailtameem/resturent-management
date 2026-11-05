@@ -105,3 +105,48 @@ it('returns active categories and products to the authenticated customer', funct
         ->assertJsonPath('data.0.name_ar', 'وجبات')
         ->assertJsonPath('data.0.products.0.name_ar', 'بيتزا خضار');
 });
+
+it('orders menu categories and their products by display order', function () {
+    $laterCategory = Category::create([
+        'name_ar' => 'فئة لاحقة',
+        'slug' => 'later-menu-category',
+        'sort_order' => 20,
+        'is_active' => true,
+    ]);
+    $earlierCategory = Category::create([
+        'name_ar' => 'فئة مبكرة',
+        'slug' => 'earlier-menu-category',
+        'sort_order' => 10,
+        'is_active' => true,
+    ]);
+
+    Product::create([
+        'category_id' => $laterCategory->id,
+        'name_ar' => 'منتج الفئة اللاحقة',
+        'base_price' => 10,
+        'is_available' => true,
+        'sort_order' => 1,
+    ]);
+    Product::create([
+        'category_id' => $earlierCategory->id,
+        'name_ar' => 'المنتج الثاني',
+        'base_price' => 10,
+        'is_available' => true,
+        'sort_order' => 2,
+    ]);
+    Product::create([
+        'category_id' => $earlierCategory->id,
+        'name_ar' => 'المنتج الأول',
+        'base_price' => 10,
+        'is_available' => true,
+        'sort_order' => 1,
+    ]);
+
+    actingAs(User::factory()->create(), 'sanctum')
+        ->getJson('/api/v1/customer/menu')
+        ->assertOk()
+        ->assertJsonPath('data.0.id', $earlierCategory->id)
+        ->assertJsonPath('data.0.products.0.name_ar', 'المنتج الأول')
+        ->assertJsonPath('data.0.products.1.name_ar', 'المنتج الثاني')
+        ->assertJsonPath('data.1.id', $laterCategory->id);
+});

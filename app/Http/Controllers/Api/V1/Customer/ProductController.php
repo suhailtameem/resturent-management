@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Customer;
 use App\Exceptions\CustomerApiException;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ProductResource;
+use App\Models\Category;
 use App\Models\Product;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -38,6 +39,10 @@ class ProductController extends Controller
                         ->orWhere('description_en', 'like', "%{$search}%");
                 });
             })
+            ->orderBy(Category::query()
+                ->select('sort_order')
+                ->whereColumn('categories.id', 'products.category_id'))
+            ->orderBy('category_id')
             ->orderBy('sort_order')
             ->orderBy('id')
             ->paginate($validated['per_page'] ?? 20)

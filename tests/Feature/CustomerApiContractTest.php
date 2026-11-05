@@ -75,6 +75,30 @@ it('lists public categories and supports available product filters', function ()
         ->assertJsonPath('data.0.price', 20);
 });
 
+it('orders listed products by category order before product order', function () {
+    $laterCategory = createCategory(['sort_order' => 20]);
+    $earlierCategory = createCategory(['sort_order' => 10]);
+
+    $laterCategoryProduct = createProduct($laterCategory, [
+        'name_ar' => 'منتج الفئة اللاحقة',
+        'sort_order' => 1,
+    ]);
+    $secondEarlierCategoryProduct = createProduct($earlierCategory, [
+        'name_ar' => 'المنتج الثاني',
+        'sort_order' => 2,
+    ]);
+    $firstEarlierCategoryProduct = createProduct($earlierCategory, [
+        'name_ar' => 'المنتج الأول',
+        'sort_order' => 1,
+    ]);
+
+    $this->getJson('/api/v1/products')
+        ->assertOk()
+        ->assertJsonPath('data.0.id', (string) $firstEarlierCategoryProduct->id)
+        ->assertJsonPath('data.1.id', (string) $secondEarlierCategoryProduct->id)
+        ->assertJsonPath('data.2.id', (string) $laterCategoryProduct->id);
+});
+
 it('returns selectable product sizes, flavors, and add-ons', function () {
     $product = createProduct(createCategory());
     ProductVariant::create([

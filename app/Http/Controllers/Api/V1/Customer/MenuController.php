@@ -15,10 +15,13 @@ class MenuController extends Controller
             ->with([
                 'products' => function ($query) {
                     $query->where('is_available', true)
-                        ->with('variants');
+                        ->with('variants')
+                        ->orderBy('sort_order')
+                        ->orderBy('id');
                 },
             ])
             ->orderBy('sort_order')
+            ->orderBy('id')
             ->get();
 
         return response()->json([

@@ -26,6 +26,7 @@ use App\Http\Controllers\Api\V1\Manager\ManagerOptionGroupController;
 use App\Http\Controllers\Api\V1\Manager\ManagerOrderController;
 use App\Http\Controllers\Api\V1\Manager\ManagerProductController;
 use App\Http\Controllers\Api\V1\Manager\ManagerProductSizeController;
+use App\Http\Controllers\Api\V1\Manager\ManagerProfileController;
 use App\Http\Controllers\Api\V1\Manager\ManagerStoreOperationController;
 use App\Http\Controllers\Api\V1\Manager\ManagerStoreSettingsController;
 use Illuminate\Http\Request;
@@ -87,6 +88,16 @@ Route::prefix('v1')->group(function () {
         });
 
         Route::middleware(['auth:staff_api', 'staff.role:super_admin'])->group(function () {
+            // Read the authenticated manager's profile.
+            Route::get('/profile', [ManagerProfileController::class, 'show']);
+
+            // Update the authenticated manager's contact and account details.
+            Route::patch('/profile', [ManagerProfileController::class, 'update']);
+
+            // Change the authenticated manager's password after verifying the current password.
+            Route::put('/profile/password', [ManagerProfileController::class, 'updatePassword'])
+                ->middleware('throttle:5,1');
+
             // Return customer-device reach counts for push notifications.
             Route::get('/notifications/reach', [ManagerNotificationController::class, 'reach']);
             // List notification history and delivery statistics.

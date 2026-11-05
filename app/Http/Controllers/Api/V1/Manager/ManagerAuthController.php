@@ -48,6 +48,7 @@ class ManagerAuthController extends Controller
                     'username' => $staffUser->username,
                     'email' => $staffUser->email,
                     'full_name' => $staffUser->full_name,
+                    'phone' => $staffUser->phone,
                     'role' => $staffUser->role,
                 ],
             ],

@@ -31,6 +31,7 @@ class ManagerCourierController extends Controller
         $completedOrders = $courier->assignedOrders()
             ->whereIn('order_status', ['delivered', 'completed'])
             ->whereDate('delivered_at', today())
+            ->whereDoesntHave('cashCollection', fn ($query) => $query->whereNotNull('settlement_id'))
             ->with(['items.options', 'deliveryAddress', 'courier', 'user', 'coupon', 'statusLogs'])
             ->latest('delivered_at')
             ->get();

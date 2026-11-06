@@ -8,6 +8,7 @@ use App\Http\Requests\Api\V1\Manager\UpdateManagerDriverRequest;
 use App\Http\Resources\ManagerDriverResource;
 use App\Models\CourierCashCollection;
 use App\Models\CourierCashSettlement;
+use App\Models\Order;
 use App\Models\StaffUser;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -16,6 +17,40 @@ use Illuminate\Support\Facades\DB;
 
 class ManagerDriverController extends Controller
 {
+    public function accounting(Request $request, StaffUser $driver): JsonResponse
+    {
+        abort_unless($driver->role === 'courier', 404);
+
+        $period = $request->query('period', 'today');
+        abort_unless(in_array($period, ['today', 'yesterday', 'previous'], true), 422);
+        $now = now()->setTimezone('Asia/Riyadh');
+        $today = $now->copy()->startOfDay();
+        $yesterday = $today->copy()->subDay();
+        $orders = $driver->assignedOrders()
+            ->where('delivery_mode', 'delivery')
+            ->whereIn('order_status', ['delivered', 'completed'])
+            ->whereNotNull('delivered_at')
+            ->when($period === 'today', fn ($query) => $query->where('delivered_at', '>=', $today)->where('delivered_at', '<', $today->copy()->addDay()))
+            ->when($period === 'yesterday', fn ($query) => $query->where('delivered_at', '>=', $yesterday)->where('delivered_at', '<', $today))
+            ->when($period === 'previous', fn ($query) => $query->where('delivered_at', '<', $yesterday))
+            ->with(['cashCollection', 'user:id,name'])
+            ->latest('delivered_at')
+            ->get();
+
+        return response()->json(['data' => [
+            'orders' => $orders->map(fn (Order $order): array => [
+                'id' => (int) $order->id,
+                'order_number' => (string) $order->order_number,
+                'customer_name' => (string) ($order->customer_name ?? $order->user?->name ?? ''),
+                'delivered_at' => $order->delivered_at?->toIso8601String(),
+                'payment_method' => (string) $order->payment_method,
+                'total_amount' => (string) $order->total_final_amount,
+                'cash_amount' => $order->cashCollection?->amount,
+                'is_settled' => $order->cashCollection?->settlement_id !== null,
+            ])->values(),
+        ]]);
+    }
+
     public function index(Request $request): AnonymousResourceCollection
     {
         $drivers = StaffUser::query()

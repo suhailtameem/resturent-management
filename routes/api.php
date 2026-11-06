@@ -229,6 +229,9 @@ Route::prefix('v1')->group(function () {
             // Deactivate a courier account while preserving order history.
             Route::delete('/drivers/{driver}', [ManagerDriverController::class, 'destroy']);
 
+            // List a courier's delivered orders for the selected accounting period.
+            Route::get('/drivers/{driver}/accounting', [ManagerDriverController::class, 'accounting']);
+
             // Reconcile all pending cash collected by a courier.
             Route::post('/drivers/{driver}/cash-settlements', [ManagerDriverController::class, 'settleCash']);
 

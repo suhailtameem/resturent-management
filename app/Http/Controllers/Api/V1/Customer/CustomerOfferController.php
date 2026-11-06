@@ -8,9 +8,35 @@ use App\Models\OfferCouponConfig;
 use App\Models\Product;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class CustomerOfferController extends Controller
 {
+    /** List active offers for the customer app home page popup. */
+    public function activeOffers(): JsonResponse
+    {
+        $offers = Offer::query()
+            ->activeNow()
+            ->with('couponConfig')
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (Offer $offer): array => [
+                'id' => (int) $offer->id,
+                'image_url' => $offer->image_path ? Storage::disk('public')->url($offer->image_path) : null,
+                'title' => $offer->title,
+                'description' => $offer->description,
+                'discount_percentage' => (float) $offer->discount_percentage,
+                'type' => $offer->type,
+                'action' => $offer->type === 'coupon' ? 'copy_coupon' : 'show_discounted_products',
+                'coupon_code' => $offer->type === 'coupon' ? $offer->couponConfig?->code : null,
+                'products_url' => $offer->type === 'auto_discount' && in_array($offer->discount_scope, ['specific_products', 'category'], true)
+                    ? url('/api/v1/customer/menu/discounted-items?offer_id='.$offer->id)
+                    : null,
+            ]);
+
+        return response()->json(['data' => $offers]);
+    }
+
     /**
      * Validate and calculate a coupon discount for a cart.
      * No authentication required.
@@ -105,12 +131,14 @@ class CustomerOfferController extends Controller
     /**
      * List all products that currently have an active auto_discount offer applied.
      */
-    public function discountedItems(): JsonResponse
+    public function discountedItems(Request $request): JsonResponse
     {
+        $validated = $request->validate(['offer_id' => ['sometimes', 'integer', 'exists:offers,id']]);
         $now = now();
 
         $activeAutoDiscounts = Offer::query()
             ->where('type', 'auto_discount')
+            ->when(isset($validated['offer_id']), fn ($query) => $query->whereKey($validated['offer_id']))
             ->activeNow()
             ->with(['items.product', 'category.products'])
             ->get();

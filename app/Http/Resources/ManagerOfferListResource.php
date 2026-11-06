@@ -5,6 +5,7 @@ namespace App\Http\Resources;
 use App\Models\Offer;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * @mixin Offer
@@ -63,6 +64,7 @@ class ManagerOfferListResource extends JsonResource
             'id' => (int) $offer->id,
             'title' => $offer->title,
             'description' => $offer->description,
+            'image_url' => $offer->image_path ? Storage::disk('public')->url($offer->image_path) : null,
             'type' => $offer->type,
             'type_label' => $offer->getTypeLabel(),
             'status' => $statusKey,

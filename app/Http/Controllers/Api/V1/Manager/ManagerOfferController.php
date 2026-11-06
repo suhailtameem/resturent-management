@@ -13,7 +13,9 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Unique;
 
@@ -145,42 +147,51 @@ class ManagerOfferController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate($this->validationRules());
+        $imagePath = isset($validated['image']) ? $this->storeOfferImage($validated['image']) : null;
 
-        $offer = DB::transaction(function () use ($validated): Offer {
-            /** @var Offer $offer */
-            $offer = Offer::create([
-                'title' => $validated['title'],
-                'description' => $validated['description'] ?? null,
-                'type' => $validated['type'],
-                'discount_scope' => $validated['discount_scope'],
-                'category_id' => $validated['category_id'] ?? null,
-                'discount_percentage' => $validated['discount_percentage'],
-                'max_discount_cap' => $validated['max_discount_cap'],
-                'min_order_amount' => $validated['min_order_amount'] ?? 0,
-                'is_active' => $validated['is_active'] ?? true,
-                'is_ongoing' => $validated['is_ongoing'] ?? true,
-                'starts_at' => $validated['starts_at'],
-                'ends_at' => $validated['ends_at'] ?? null,
-            ]);
-
-            // Create coupon config if type = coupon
-            if ($validated['type'] === 'coupon' && isset($validated['coupon'])) {
-                OfferCouponConfig::create([
-                    'offer_id' => $offer->id,
-                    'code' => strtoupper((string) $validated['coupon']['code']),
-                    'usage_limit_per_user' => $validated['coupon']['usage_limit_per_user'] ?? 'once',
-                    'total_usage_limit' => $validated['coupon']['total_usage_limit'] ?? null,
-                    'total_used_count' => 0,
+        try {
+            $offer = DB::transaction(function () use ($validated, $imagePath): Offer {
+                /** @var Offer $offer */
+                $offer = Offer::create([
+                    'title' => $validated['title'],
+                    'description' => $validated['description'] ?? null,
+                    'image_path' => $imagePath,
+                    'type' => $validated['type'],
+                    'discount_scope' => $validated['discount_scope'],
+                    'category_id' => $validated['category_id'] ?? null,
+                    'discount_percentage' => $validated['discount_percentage'],
+                    'max_discount_cap' => $validated['max_discount_cap'],
+                    'min_order_amount' => $validated['min_order_amount'] ?? 0,
+                    'is_active' => $validated['is_active'] ?? true,
+                    'is_ongoing' => $validated['is_ongoing'] ?? true,
+                    'starts_at' => $validated['starts_at'],
+                    'ends_at' => $validated['ends_at'] ?? null,
                 ]);
-            }
 
-            // Sync offer items for specific_products scope
-            if ($validated['discount_scope'] === 'specific_products' && ! empty($validated['product_ids'])) {
-                $this->syncOfferItems($offer, (array) $validated['product_ids']);
-            }
+                // Create coupon config if type = coupon
+                if ($validated['type'] === 'coupon' && isset($validated['coupon'])) {
+                    OfferCouponConfig::create([
+                        'offer_id' => $offer->id,
+                        'code' => strtoupper((string) $validated['coupon']['code']),
+                        'usage_limit_per_user' => $validated['coupon']['usage_limit_per_user'] ?? 'once',
+                        'total_usage_limit' => $validated['coupon']['total_usage_limit'] ?? null,
+                        'total_used_count' => 0,
+                    ]);
+                }
 
-            return $offer;
-        });
+                // Sync offer items for specific_products scope
+                if ($validated['discount_scope'] === 'specific_products' && ! empty($validated['product_ids'])) {
+                    $this->syncOfferItems($offer, (array) $validated['product_ids']);
+                }
+
+                return $offer;
+            });
+        } catch (\Throwable $exception) {
+            if ($imagePath !== null) {
+                Storage::disk('public')->delete($imagePath);
+            }
+            throw $exception;
+        }
 
         $offer->load('couponConfig');
         $statusKey = $offer->getStatusKey();
@@ -189,6 +200,7 @@ class ManagerOfferController extends Controller
             'data' => [
                 'id' => (int) $offer->id,
                 'title' => $offer->title,
+                'image_url' => $offer->image_path ? Storage::disk('public')->url($offer->image_path) : null,
                 'type' => $offer->type,
                 'code' => $offer->couponConfig?->code,
                 'discount_percentage' => (float) $offer->discount_percentage,
@@ -228,40 +240,58 @@ class ManagerOfferController extends Controller
         }
 
         $validated = $request->validate($rules);
+        $newImagePath = isset($validated['image']) ? $this->storeOfferImage($validated['image']) : null;
+        $previousImagePath = $offer->image_path;
 
-        DB::transaction(function () use ($offer, $validated): void {
-            $offerFields = array_intersect_key($validated, array_flip([
-                'title', 'description', 'discount_scope', 'category_id',
-                'discount_percentage', 'max_discount_cap', 'min_order_amount',
-                'is_active', 'is_ongoing', 'starts_at', 'ends_at',
-            ]));
+        try {
+            DB::transaction(function () use ($offer, $validated, $newImagePath): void {
+                $offerFields = array_intersect_key($validated, array_flip([
+                    'title', 'description', 'discount_scope', 'category_id',
+                    'discount_percentage', 'max_discount_cap', 'min_order_amount',
+                    'is_active', 'is_ongoing', 'starts_at', 'ends_at',
+                ]));
+                if ($newImagePath !== null) {
+                    $offerFields['image_path'] = $newImagePath;
+                }
+                if (($validated['remove_image'] ?? false) === true) {
+                    $offerFields['image_path'] = null;
+                }
 
-            if (! empty($offerFields)) {
-                $offer->update($offerFields);
+                if (! empty($offerFields)) {
+                    $offer->update($offerFields);
+                }
+
+                // Update coupon config if provided
+                if (isset($validated['coupon']) && $offer->couponConfig) {
+                    $couponFields = [];
+                    if (isset($validated['coupon']['code'])) {
+                        $couponFields['code'] = strtoupper((string) $validated['coupon']['code']);
+                    }
+                    if (isset($validated['coupon']['usage_limit_per_user'])) {
+                        $couponFields['usage_limit_per_user'] = $validated['coupon']['usage_limit_per_user'];
+                    }
+                    if (array_key_exists('total_usage_limit', $validated['coupon'] ?? [])) {
+                        $couponFields['total_usage_limit'] = $validated['coupon']['total_usage_limit'];
+                    }
+                    if (! empty($couponFields)) {
+                        $offer->couponConfig->update($couponFields);
+                    }
+                }
+
+                // Re-sync offer items if product_ids provided
+                if (isset($validated['product_ids'])) {
+                    $this->syncOfferItems($offer, (array) $validated['product_ids']);
+                }
+            });
+        } catch (\Throwable $exception) {
+            if ($newImagePath !== null) {
+                Storage::disk('public')->delete($newImagePath);
             }
-
-            // Update coupon config if provided
-            if (isset($validated['coupon']) && $offer->couponConfig) {
-                $couponFields = [];
-                if (isset($validated['coupon']['code'])) {
-                    $couponFields['code'] = strtoupper((string) $validated['coupon']['code']);
-                }
-                if (isset($validated['coupon']['usage_limit_per_user'])) {
-                    $couponFields['usage_limit_per_user'] = $validated['coupon']['usage_limit_per_user'];
-                }
-                if (array_key_exists('total_usage_limit', $validated['coupon'] ?? [])) {
-                    $couponFields['total_usage_limit'] = $validated['coupon']['total_usage_limit'];
-                }
-                if (! empty($couponFields)) {
-                    $offer->couponConfig->update($couponFields);
-                }
-            }
-
-            // Re-sync offer items if product_ids provided
-            if (isset($validated['product_ids'])) {
-                $this->syncOfferItems($offer, (array) $validated['product_ids']);
-            }
-        });
+            throw $exception;
+        }
+        if (($newImagePath !== null || ($validated['remove_image'] ?? false) === true) && $previousImagePath) {
+            Storage::disk('public')->delete($previousImagePath);
+        }
 
         $offer->load(['couponConfig', 'items']);
 
@@ -343,6 +373,8 @@ class ManagerOfferController extends Controller
         return [
             'title' => ['required', 'string', 'min:3', 'max:255'],
             'description' => ['nullable', 'string'],
+            'image' => ['sometimes', 'image', 'mimes:jpg,jpeg,png,webp', 'extensions:jpg,jpeg,png,webp', 'max:5120'],
+            'remove_image' => ['sometimes', 'boolean'],
             'type' => ['required', 'string', Rule::in(['coupon', 'auto_discount'])],
             'discount_scope' => ['required', 'string', Rule::in(['cart', 'specific_products', 'category'])],
             'discount_percentage' => ['required', 'numeric', 'min:1', 'max:100'],
@@ -382,6 +414,16 @@ class ManagerOfferController extends Controller
                 'exists:categories,id',
             ],
         ];
+    }
+
+    private function storeOfferImage(UploadedFile $image): string
+    {
+        $path = $image->store('offers', 'public');
+        if (! is_string($path) || $path === '') {
+            throw new \RuntimeException('The offer image could not be stored.');
+        }
+
+        return $path;
     }
 
     /**

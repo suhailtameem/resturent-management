@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property int $id
  * @property string $title
  * @property string|null $description
+ * @property string|null $image_path
  * @property string $type coupon|auto_discount
  * @property string $discount_scope cart|specific_products|category
  * @property int|null $category_id
@@ -35,6 +36,7 @@ class Offer extends Model
     protected $fillable = [
         'title',
         'description',
+        'image_path',
         'type',
         'discount_scope',
         'category_id',

@@ -308,6 +308,9 @@ Route::prefix('v1')->group(function () {
         });
     });
 
+    // List currently active offers for the customer home page popup.
+    Route::get('/customer/offers', [CustomerOfferController::class, 'activeOffers']);
+
     // Customer checkout: validate and apply coupon code to cart.
     Route::post('/customer/cart/apply-coupon', [CustomerOfferController::class, 'applyCoupon']);
     Route::post('/cart/apply-coupon', [CustomerOfferController::class, 'applyCoupon']);

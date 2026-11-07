@@ -26,6 +26,32 @@ class CustomerAuthController extends Controller
 
         $phone = SaudiPhone::normalize($validated['phone']);
 
+        $user = User::query()->whereIn('phone', SaudiPhone::equivalentFormats($phone))->first();
+        if ($user?->status !== null && $user->status !== 'active') {
+            throw new CustomerApiException('This customer account is blocked.', 'CUSTOMER_BLOCKED', 403);
+        }
+
+        if (! $user) {
+            $user = User::create([
+                'name' => 'Customer',
+                'email' => null,
+                'password' => Str::random(40),
+                'phone' => $phone,
+                'full_name' => 'Customer',
+                'preferred_language' => 'ar',
+                'is_vip' => false,
+                'status' => 'active',
+                'phone_verified_at' => now(),
+            ]);
+        }
+
+        if ($user->phone_verified_at !== null || $user->manager_verified_at !== null) {
+            return response()->json(['data' => [
+                'otp_required' => false,
+                ...$this->issueSession($user),
+            ]]);
+        }
+
         if (! config('auth.customer_otp_bypass')) {
             throw new CustomerApiException(
                 'OTP delivery is not configured.',
@@ -61,6 +87,7 @@ class CustomerAuthController extends Controller
 
         return response()->json([
             'data' => [
+                'otp_required' => true,
                 'message' => 'Verification code sent successfully.',
                 'retry_in_seconds' => 60,
             ],
@@ -202,6 +229,74 @@ class CustomerAuthController extends Controller
         }
 
         return response()->noContent();
+    }
+
+    public function deleteAccount(Request $request): JsonResponse
+    {
+        /** @var User $user */
+        $user = $request->user();
+
+        DB::transaction(function () use ($user): void {
+            $hasActiveOrders = DB::table('orders')
+                ->where('user_id', $user->id)
+                ->whereIn('order_status', [
+                    'received',
+                    'pending_confirmation',
+                    'pending',
+                    'preparing',
+                    'ready',
+                    'ready_for_pickup',
+                    'out_for_delivery',
+                ])
+                ->exists();
+
+            if ($hasActiveOrders) {
+                throw new CustomerApiException(
+                    'Please wait until your active orders are completed before deleting your account.',
+                    'ACTIVE_ORDERS_PRESENT',
+                    409,
+                );
+            }
+
+            $orderIds = DB::table('orders')
+                ->where('user_id', $user->id)
+                ->select('id');
+
+            DB::table('order_items')
+                ->whereIn('order_id', $orderIds)
+                ->update(['special_instructions' => null]);
+            DB::table('order_status_logs')
+                ->whereIn('order_id', $orderIds)
+                ->update(['notes' => null]);
+            DB::table('orders')
+                ->where('user_id', $user->id)
+                ->update([
+                    'user_id' => null,
+                    'customer_name' => 'Deleted customer',
+                    'customer_phone' => '',
+                    'delivery_address_id' => null,
+                    'chef_special_notes' => null,
+                    'idempotency_key' => null,
+                ]);
+
+            DB::table('notifications')->where('user_id', $user->id)->delete();
+            DB::table('sessions')->where('user_id', $user->id)->delete();
+            if ($user->email !== null) {
+                DB::table('password_reset_tokens')->where('email', $user->email)->delete();
+            }
+
+            $user->tokens()->delete();
+            $user->delete();
+
+            $phone = $user->phone;
+            if ($phone !== null) {
+                foreach (['otp:', 'otp_attempts:', 'otp_retry:', 'otp_next_send:'] as $keyPrefix) {
+                    Cache::forget($keyPrefix.$phone);
+                }
+            }
+        });
+
+        return response()->json(['message' => 'Your account and personal data have been deleted.']);
     }
 
     /**

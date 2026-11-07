@@ -48,7 +48,7 @@ Route::prefix('v1')->group(function () {
     // Legacy alias for startup lookups.
     Route::get('/customer/store/settings', [CustomerStoreSettingsController::class, 'show']);
 
-    // Request a customer OTP; delivery is enabled only in local/testing until a provider is configured.
+    // Start customer sign-in, returning whether the app should require OTP verification.
     Route::post('/auth/login-phone', [CustomerAuthController::class, 'sendOtp'])->middleware('throttle:5,1');
 
     // Verify a one-time code and issue a customer token.
@@ -370,6 +370,9 @@ Route::prefix('v1')->group(function () {
 
     // Update customer profile fields.
     Route::patch('/me', [CustomerProfileController::class, 'update'])->middleware('auth:sanctum');
+
+    // Delete the authenticated customer's account and anonymize retained order records.
+    Route::delete('/me/account', [CustomerAuthController::class, 'deleteAccount'])->middleware('auth:sanctum');
 
     // List saved addresses for the authenticated customer.
     Route::get('/addresses', [CustomerAddressController::class, 'index'])->middleware('auth:sanctum');
